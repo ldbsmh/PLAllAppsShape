@@ -17,22 +17,21 @@ import java.lang.reflect.Method;
  *     shape != null ? shape : this.defaultIconShape      &lt;-- the fallback is the whole trick
  *
  * ItemInfoWithIcon.newIcon(ctx, flags):
- *     workspace icon  -> passes iconShapeData.value   (explicit shape, unaffected by us)
- *     everything else -> passes null                  (drawer, taskbar, ...)
- *
- * BaseIconFactory.defaultIconShapeCache (static, WeakReference per size)
- *     built from AdaptiveIconDrawable.getIconMask() == Resources.getSystem() config_icon_mask
+ *     workspace icon  -&gt; passes iconShapeData.value   (explicit shape, unaffected by us)
+ *     everything else -&gt; passes null                  (drawer, taskbar, ...)
  * </pre>
  * So the drawer gets {@code defaultIconShape}, which the launcher fills from the system mask - a
  * circle, regardless of the shape chosen for the workspace. Two changes make it follow the desktop:
  * <ol>
  *   <li>every {@code BitmapInfo.defaultIconShape} is replaced with {@code IconState.iconShape}
  *       (workspace icons are unaffected: they pass their own shape);</li>
- *   <li>{@code config_icon_mask} is overridden with the same path, so the static cache and any
- *       bitmap the launcher renders itself also use it.</li>
+ *   <li>{@code config_icon_mask} is overridden with the same path, so the static shape cache and
+ *       the icon shadows use it too.</li>
  * </ol>
- * No owner heuristics and no shape building: {@code iconState.iconShape} is already the exact
- * object the workspace uses.
+ *
+ * <p><b>Re-entrancy rule:</b> {@link Platform#parseIconState()} must return a <i>cached</i> snapshot,
+ * never invoke the launcher method. Calling it from inside that method's own hook is an infinite
+ * recursion (it crashed the launcher once).
  */
 public final class ShapeSync {
 
@@ -69,50 +68,57 @@ public final class ShapeSync {
     // ------------------------------------------------------------------ resolution
 
     /**
-     * The shape the drawer should use right now.
+     * Applies a state snapshot. Pure bookkeeping: never calls back into the launcher, so it is safe
+     * to run from inside {@code parseIconState}'s own hook.
      *
-     * @return shape to install, or null when the system mask is already correct (circle)
+     * @return true when the effective shape changed (the caller may want to redraw)
      */
-    public synchronized Object resolve(Platform platform) {
+    public synchronized boolean applySnapshot(Platform platform, Pending state) {
         try {
             if (platform.forceOverride()) {
                 platform.setOverride(null);
                 lastPath = "";
                 lastShape = null;
-                Log.i("system mask override restored");
-                return null;
+                Log.i("override released");
+                return true;
             }
-            Pending state = platform.parseIconState();
             if (state == null || state.shape == null) {
-                return lastShape;
+                return false;
             }
             if (isCircle(state.shape)) {
                 // The system mask is a circle already: nothing to change.
-                if (!lastPath.isEmpty()) {
-                    platform.setOverride(null);
-                    lastPath = "";
-                    lastShape = null;
-                    Log.i("desktop shape is a circle: override released");
+                if (lastPath.isEmpty()) {
+                    return false;
                 }
-                return null;
+                platform.setOverride(null);
+                lastPath = "";
+                lastShape = null;
+                Log.i("desktop shape is a circle: override released");
+                return true;
             }
-            String path = state.path != null && !state.path.isEmpty() ? state.path : state.mask;
+            String path = state.path != null && !state.path.trim().isEmpty() ? state.path : state.mask;
             if (path == null || path.trim().isEmpty()) {
-                return lastShape;
+                return false;
             }
             if (path.equals(lastPath) && lastShape != null) {
-                return lastShape;
+                return false;
             }
             platform.setOverride(path);
             lastPath = path;
             lastShape = state.shape;
             patches = 0;
             Log.i("desktop shape: " + abbreviate(path));
-            return lastShape;
+            return true;
         } catch (Throwable t) {
-            Log.e("resolve desktop shape", t);
-            return lastShape;
+            Log.e("apply snapshot", t);
+            return false;
         }
+    }
+
+    /** The shape to use now, from the platform's cached state. */
+    public synchronized Object resolve(Platform platform) {
+        applySnapshot(platform, platform.parseIconState());
+        return lastShape;
     }
 
     /** Applies the desktop shape to a BitmapInfo; returns true when the field was replaced. */
@@ -143,7 +149,10 @@ public final class ShapeSync {
 
     /** Everything launcher/framework specific the core needs. */
     public interface Platform {
-        /** {@code ThemeManager#parseIconState(null)} reduced to what we need. */
+        /**
+         * The <b>cached</b> {@code ThemeManager#parseIconState(null)} result, or null before the
+         * launcher has parsed it once. Implementations must not invoke the real method here.
+         */
         Pending parseIconState();
 
         /**

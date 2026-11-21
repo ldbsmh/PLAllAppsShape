@@ -120,6 +120,22 @@ public class ShapeSyncTest {
     }
 
     @Test
+    public void resolvingIsBoundedAndDoesNotLoop() {
+        // Regression guard: applySnapshot() used to re-enter parseIconState() through its own hook,
+        // which recursed until the launcher died. It must be pure bookkeeping.
+        for (int i = 0; i < 50; i++) {
+            sync.applySnapshot(launcher, launcher.parseIconState());
+        }
+        assertTrue("parseIconState called " + launcher.parseCalls + " times", launcher.parseCalls <= 50);
+    }
+
+    @Test
+    public void unchangedStateDoesNotReportAChange() {
+        assertTrue(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertFalse(sync.applySnapshot(launcher, launcher.parseIconState()));
+    }
+
+    @Test
     public void circleDetection() {
         assertTrue(ShapeSync.isCircle(new FakeLauncher.ShapeDelegate$Circle()));
         assertFalse(ShapeSync.isCircle(new FakeLauncher.Shape("squircle")));

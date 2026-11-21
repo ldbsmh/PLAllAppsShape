@@ -34,10 +34,14 @@ final class FakeLauncher implements Platform {
     boolean forceOverride;
     boolean stateAvailable = true;
 
+    /** Counts calls to parseIconState(): the core must not call it in a loop. */
+    int parseCalls;
+
     final List<String> overrides = new ArrayList<>();
 
     @Override
     public Pending parseIconState() {
+        parseCalls++;
         return stateAvailable ? new Pending(mask, path, shape) : null;
     }
 

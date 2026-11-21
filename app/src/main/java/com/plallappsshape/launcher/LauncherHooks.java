@@ -17,13 +17,15 @@ import de.robv.android.xposed.XposedHelpers;
  * <p>See {@link ShapeSync} for the decompiled pipeline. Two hooks do the work:
  * <ul>
  *   <li>{@code BitmapInfo}'s constructors: replace {@code defaultIconShape} with the workspace
- *       shape. Workspace icons pass their own shape to {@code newIcon()}, so they are unaffected
- *       and keep whatever the launcher already does for them;</li>
+ *       shape. Workspace icons pass their own shape to {@code newIcon()}, so they are unaffected;</li>
  *   <li>{@code Resources.getString(int)} for {@code config_icon_mask}: so the launcher's static
  *       {@code defaultIconShapeCache} (weak references) rebuilds with the same path.</li>
  * </ul>
- * {@code ThemeManager.parseIconState} is only observed: it tells us the shape and the moment the
- * user changed it, which is also when the launcher should redraw its icons.
+ * {@code ThemeManager.parseIconState} is only <i>observed</i>, to snapshot the current shape.
+ *
+ * <p><b>Re-entrancy:</b> the {@code parseIconState} hook only records the result into
+ * {@link #mState}; it never calls back into the launcher. The first attempt called
+ * {@code parseIconState()} from inside its own hook, which recursed until the launcher died.
  */
 final class LauncherHooks implements ShapeSync.Platform {
 
@@ -35,8 +37,10 @@ final class LauncherHooks implements ShapeSync.Platform {
     private final ClassLoader mCl;
     private final ShapeSync mSync = new ShapeSync();
 
+    /** Latest snapshot from the launcher: written by the hook, read by the module. */
+    private volatile ShapeSync.Pending mState;
+
     private Object mThemeManager;
-    private Method mParseIconState;
     private Field mIconShapeDataField;
     private Method mDispatchValue;
 
@@ -45,6 +49,9 @@ final class LauncherHooks implements ShapeSync.Platform {
     private volatile String mOverridePath;
     private volatile boolean mOverrideActive;
     private volatile boolean mForceOverride;
+
+    /** Throttle for the redraw request, so a burst of parseIconState calls cannot flood it. */
+    private volatile long mLastDispatch;
 
     private LauncherHooks(Context context, ClassLoader cl) {
         mContext = context;
@@ -60,11 +67,9 @@ final class LauncherHooks implements ShapeSync.Platform {
         try {
             hooks.hookThemeManager();
             hooks.hookBitmapInfo();
-            Probe.state(context, "hook 已安装（" + (hooks.mParseIconState != null ? "形状" : "缺形状")
+            Probe.state(context, "hook 已安装（" + (hooks.mIconShapeDataField != null ? "形状" : "缺形状")
                     + "/" + (hooks.mDefaultIconShapeField != null ? "图标" : "缺图标") + "）");
             Log.i("hooks installed");
-            // Learn the current shape now, so the very first drawer open is already correct.
-            hooks.refresh("startup");
         } catch (Throwable t) {
             Log.e("install", t);
             sInstance = null;
@@ -80,7 +85,11 @@ final class LauncherHooks implements ShapeSync.Platform {
         boolean enabled = HookEntry.enabled();
         hooks.mForceOverride = !enabled && hooks.mOverrideActive;
         Log.i("settings changed, enabled=" + enabled);
-        hooks.refresh("settings");
+        if (!enabled) {
+            // Release the mask override so the launcher returns to its own shape.
+            hooks.mSync.applySnapshot(hooks, null);
+            hooks.dispatchIconShape(true);
+        }
     }
 
     // ---------------------------------------------------------------- hooks
@@ -102,22 +111,46 @@ final class LauncherHooks implements ShapeSync.Platform {
             if (!m.getParameterTypes()[0].isAssignableFrom(iconState)) {
                 continue;
             }
-            mParseIconState = m;
             m.setAccessible(true);
             XposedBridge.hookMethod(m, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    mThemeManager = param.thisObject;
-                    if (param.getResult() != null) {
-                        refresh("parseIconState");
-                    }
+                    // Record only. Never call back into the launcher from here.
+                    onIconState(param.thisObject, param.getResult());
                 }
             });
             Log.i("ThemeManager.parseIconState hooked");
-            break;
+            return;
         }
-        if (mParseIconState == null) {
-            Log.e("parseIconState not found", null);
+        Log.e("parseIconState not found", null);
+    }
+
+    /** Stores the launcher's freshly parsed state and reacts only when the shape really changed. */
+    private void onIconState(Object themeManager, Object state) {
+        try {
+            if (themeManager != null) {
+                mThemeManager = themeManager;
+            }
+            if (state == null) {
+                return;
+            }
+            Field maskField = ShapeSync.field(state.getClass(), "iconMask");
+            Field shapeField = ShapeSync.field(state.getClass(), "iconShape");
+            Object mask = maskField == null ? null : maskField.get(state);
+            Object shape = shapeField == null ? null : shapeField.get(state);
+            ShapeSync.Pending pending =
+                    new ShapeSync.Pending((String) mask, pathOf(shape), shape);
+            mState = pending;
+
+            if (!HookEntry.enabled()) {
+                return;
+            }
+            if (mSync.applySnapshot(this, pending)) {
+                Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(mSync.lastPath()));
+                dispatchIconShape(false);
+            }
+        } catch (Throwable t) {
+            Log.e("onIconState", t);
         }
     }
 
@@ -148,25 +181,17 @@ final class LauncherHooks implements ShapeSync.Platform {
         Log.i("BitmapInfo constructors hooked: " + hooked);
     }
 
-    /** Re-reads the desktop shape and redraws the launcher's icons when it changed. */
-    private void refresh(String reason) {
-        if (!HookEntry.enabled()) {
+    /**
+     * Asks the launcher to re-apply the icon shape to its icons.
+     *
+     * @param force bypass the throttle (used when disabling the module)
+     */
+    private void dispatchIconShape(boolean force) {
+        long now = System.currentTimeMillis();
+        if (!force && now - mLastDispatch < 1000L) {
             return;
         }
-        String before = mSync.lastPath();
-        Object shape = mSync.resolve(this);
-        String after = mSync.lastPath();
-        if (shape != null) {
-            Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(after));
-        }
-        if (!after.equals(before)) {
-            Log.i("shape changed via " + reason);
-            dispatchIconShape();
-        }
-    }
-
-    /** Asks the launcher to re-apply the icon shape to its icons (no restart needed). */
-    private void dispatchIconShape() {
+        mLastDispatch = now;
         try {
             if (mThemeManager == null || mIconShapeDataField == null || mDispatchValue == null) {
                 return;
@@ -178,7 +203,7 @@ final class LauncherHooks implements ShapeSync.Platform {
             Object current = XposedHelpers.callMethod(ref, "getValue");
             if (current != null) {
                 mDispatchValue.invoke(ref, current);
-                Log.d("icon shape redraw requested");
+                Log.i("icon shape redraw requested");
             }
         } catch (Throwable t) {
             Log.e("dispatch", t);
@@ -189,23 +214,7 @@ final class LauncherHooks implements ShapeSync.Platform {
 
     @Override
     public ShapeSync.Pending parseIconState() {
-        if (mThemeManager == null || mParseIconState == null) {
-            return null;
-        }
-        try {
-            Object state = mParseIconState.invoke(mThemeManager, (Object) null);
-            if (state == null) {
-                return null;
-            }
-            Field maskField = ShapeSync.field(state.getClass(), "iconMask");
-            Field shapeField = ShapeSync.field(state.getClass(), "iconShape");
-            Object mask = maskField == null ? null : maskField.get(state);
-            Object shape = shapeField == null ? null : shapeField.get(state);
-            return new ShapeSync.Pending((String) mask, pathOf(shape), shape);
-        } catch (Throwable t) {
-            Log.d("parseIconState: " + t);
-            return null;
-        }
+        return mState;
     }
 
     /** The SVG path behind a ShapeDelegate, or "" when it is a built-in shape. */
