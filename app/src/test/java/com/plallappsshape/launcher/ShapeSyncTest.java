@@ -66,17 +66,13 @@ public class ShapeSyncTest {
 
     @Test
     public void circleIsIgnored() {
-        launcher.stateShape = new Object() {
-            @Override
-            public String toString() {
-                return "com.android.launcher3.graphics.ShapeDelegate$Circle";
-            }
-        };
-        // a real circle instance is what matters, see circleShapeClass below
-        launcher.stateShape = owner(com.android.launcher3.graphics.ShapeDelegate$Circle.class);
+        // name-matched circle, exactly like com.android.launcher3.graphics.ShapeDelegate$Circle
+        launcher.stateShape = new ShapeDelegate$Circle();
         BitmapInfo info = new BitmapInfo(owner(com.android.launcher3.BubbleTextView.class));
         assertFalse(sync.applyToBitmap(launcher, info));
         assertTrue(launcher.built.isEmpty());
+        assertTrue(ShapeSync.isCircle(launcher.stateShape));
+        assertFalse(ShapeSync.isCircle(new Object()));
     }
 
     @Test
