@@ -25,11 +25,6 @@ android {
         }
     }
 
-    sourceSets {
-        // Empty classes named like the launcher's, so the JVM tests exercise the real name rules.
-        test.java.srcDirs 'test-placeholders'
-    }
-
     buildTypes {
         debug {
             minifyEnabled false

@@ -7,17 +7,13 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Fake launcher for {@link ShapeSync}: a mutable IconState plus records of what the core builds
- * and overrides. Lives in the launcher package because {@link Platform} is package-internal.
- */
-public final class FakeLauncher implements Platform {
+/** Fake launcher backing {@link ShapeSyncTest}: mutable IconState + recorded builds/overrides. */
+final class FakeLauncher implements Platform {
 
-    /** Shape identity: what the launcher's IconShape instances amount to for our purposes. */
-    public static final class Shape {
-        public final String svg;
+    static final class Shape {
+        final String svg;
 
-        public Shape(String svg) {
+        Shape(String svg) {
             this.svg = svg;
         }
 
@@ -37,17 +33,17 @@ public final class FakeLauncher implements Platform {
         }
     }
 
-    public String prefKey = "icon_shape_squircle";
-    public String stateMask = "icon_shape_squircle";
-    public String statePath = "icon_shape_squircle";   // built-in shapes report their key
-    public Object stateShape = new Object();
-    public String svg = "SQUIRCLE_SVG";
-    public boolean forceOverride;
-    public boolean buildFails;
-    public boolean nullSystemString;
+    String prefKey = "icon_shape_squircle";
+    String stateMask = "icon_shape_squircle";
+    String statePath = "icon_shape_squircle";   // built-in shapes report their key
+    Object stateShape = new Object();
+    String svg = "SQUIRCLE_SVG";
+    boolean forceOverride;
+    boolean buildFails;
+    boolean nullSystemString;
 
-    public final List<String> built = new ArrayList<>();
-    public final List<String> overrides = new ArrayList<>();
+    final List<String> built = new ArrayList<>();
+    final List<String> overrides = new ArrayList<>();
 
     @Override
     public String readShapeKey() {
