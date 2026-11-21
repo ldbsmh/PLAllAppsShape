@@ -81,8 +81,12 @@ app/src/main/java/com/plallappsshape/
 ## 构建
 
 ```bash
-./gradlew assembleDebug test     # 需要 Android SDK 36 + JDK 17
+sh bootstrap.sh assembleDebug    # 需要 Android SDK 36 + JDK 17
 ```
+
+> 为什么不是 `./gradlew`：wrapper 与 `de.robv.android.xposed:api:82` 都不在仓库里（前者是二进制，
+> 后者已从 Maven Central 下线）。`bootstrap.sh` 会拉 Gradle wrapper，并用
+> `tools/build_xposed_api.py` 生成 compileOnly 的 Xposed API jar。
 
 没有 SDK 也能先自查（本仓库自带两个脚本，纯 JDK）：
 
