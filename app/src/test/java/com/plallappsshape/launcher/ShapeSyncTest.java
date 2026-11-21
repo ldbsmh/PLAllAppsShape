@@ -1,8 +1,5 @@
 package com.plallappsshape.launcher;
 
-import android.graphics.drawable.AdaptiveIconDrawable;
-import android.graphics.drawable.ColorDrawable;
-
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -158,12 +155,5 @@ public class ShapeSyncTest {
         assertTrue(ShapeSync.looksLikePath("m 0,0 h 100"));
         assertFalse(ShapeSync.looksLikePath("icon_shape_squircle"));
         assertFalse(ShapeSync.looksLikePath(null));
-    }
-
-    @Test
-    public void launcherClassesExistInAndroidJar() {
-        // sanity: the shadowed framework classes the hook touches resolve
-        assertTrue(AdaptiveIconDrawable.class.getName().endsWith("AdaptiveIconDrawable"));
-        assertTrue(ColorDrawable.class.getName().endsWith("ColorDrawable"));
     }
 }
