@@ -18,6 +18,17 @@ android {
         buildConfig false
     }
 
+    // Ship both module entry descriptions: assets/xposed_init (classic Xposed API, used by the
+    // Xposed manager / older LSPosed) and META-INF/xposed/*.list (LSPosed >= 93). The library
+    // resources are packaged as-is; nothing else uses java resources in this module.
+    sourceSets {
+        main {
+            resources {
+                srcDirs 'src/main/resources'
+            }
+        }
+    }
+
     testOptions {
         unitTests {
             // owners / resources live in android.jar at test time: return defaults instead of throwing

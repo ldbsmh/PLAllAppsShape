@@ -8,6 +8,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -27,6 +28,8 @@ public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
     static final String KEY_LOG = "verbose_log";
     static final String ACTION_RELOAD = "com.plallappsshape.RELOAD";
 
+    private static final java.util.concurrent.atomic.AtomicBoolean sLoadedOnce =
+            new java.util.concurrent.atomic.AtomicBoolean();
     private static volatile boolean sReady;
     private static volatile SharedPreferences sPrefs;
 
@@ -40,6 +43,10 @@ public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
         if (lpparam.classLoader == null || !LAUNCHER_PKG.equals(lpparam.packageName)) {
             return;
         }
+        if (sLoadedOnce.compareAndSet(false, true)) {
+            // One line per launcher process start: proves the module reached the launcher.
+            XposedBridge.log("[PLAllAppsShape] loaded into " + lpparam.processName);
+        }
         try {
             XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
                 @Override
@@ -49,6 +56,7 @@ public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
                     }
                     sReady = true;
                     Context ctx = (Context) param.thisObject;
+                    Probe.state(ctx, "已加载进启动器 " + lpparam.processName);
                     initPrefs(ctx);
                     LauncherHooks.install(ctx, lpparam.classLoader);
                 }

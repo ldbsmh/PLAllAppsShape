@@ -56,6 +56,8 @@ final class LauncherHooks implements ShapeSync.Platform {
         try {
             hooks.hookThemeManager();
             hooks.hookBitmapInfo();
+            Probe.state(context, "hook 已安装（" + (hooks.mParseIconState != null ? "形状" : "缺形状 hook")
+                    + "/" + (hooks.mDefaultIconShapeField != null ? "图标" : "缺图标 hook") + "）");
             Log.i("hooks installed");
         } catch (Throwable t) {
             Log.e("install", t);
@@ -121,6 +123,7 @@ final class LauncherHooks implements ShapeSync.Platform {
             Object mask = maskField == null ? null : maskField.get(state);
             boolean changed = mask instanceof String && !mask.equals(mSync.lastMask());
             mSync.resolve(this);
+            Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(mSync.lastMask()));
             if (changed) {
                 dispatchIconShape();
             }

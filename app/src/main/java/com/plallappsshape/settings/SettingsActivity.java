@@ -16,19 +16,22 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 import com.plallappsshape.R;
+import com.plallappsshape.launcher.Probe;
 
 /**
- * Settings UI. LSPosed loads this activity inside the launcher process, so the preferences written
- * here are the ones {@code HookEntry} reads.
+ * Settings UI. It can live in either process (module app, or inside the launcher when Xposed loads
+ * it); the launcher side reads the same {@code plallappsshape} preference file.
  */
-public class SettingsActivity extends android.app.Activity {
+public class SettingsActivity extends Activity {
+
+    static final String PREFS = "plallappsshape";
 
     private SharedPreferences prefs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        prefs = getSharedPreferences("plallappsshape", MODE_PRIVATE);
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         setContentView(buildUi());
     }
 
@@ -54,6 +57,9 @@ public class SettingsActivity extends android.app.Activity {
         root.addView(switchRow(getString(R.string.pref_enabled), "enabled", true));
         root.addView(switchRow(getString(R.string.pref_log), "verbose_log", false));
 
+        TextView probe = statusRow();
+        root.addView(probe);
+
         TextView hint = new TextView(this);
         hint.setText(getString(R.string.hint));
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -64,6 +70,20 @@ public class SettingsActivity extends android.app.Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         return scroll;
+    }
+
+    /** Shows what the module last saw in the launcher - the fastest way to tell whether it hooked. */
+    private TextView statusRow() {
+        SharedPreferences qa = getSharedPreferences("plallappsshape_qa", MODE_PRIVATE);
+        String state = qa.getString(Probe.KEY_STATE, "");
+        String last = qa.getString(Probe.KEY_LAST, "");
+        TextView tv = new TextView(this);
+        tv.setText(getString(R.string.status) + "\n" + (state.isEmpty() ? "-" : state)
+                + (last.isEmpty() ? "" : "\n" + last));
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextColor(Color.parseColor("#46464F"));
+        tv.setPadding(dp(4), dp(16), dp(4), 0);
+        return tv;
     }
 
     private View switchRow(String label, final String key, boolean def) {

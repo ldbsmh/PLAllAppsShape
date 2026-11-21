@@ -5,4 +5,5 @@
     <string name="pref_enabled">启用（抽屉跟随桌面形状）</string>
     <string name="pref_log">详细日志（标签 PLAllAppsShape）</string>
     <string name="hint">LSPosed 作用域：Pixel 启动器 (com.google.android.apps.nexuslauncher)\n版本：1.0</string>
+    <string name="status">状态</string>
 </resources>

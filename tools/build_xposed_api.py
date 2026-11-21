@@ -25,8 +25,8 @@ public class Context {}
 package android.content.pm;
 public class ApplicationInfo {
     public String packageName;
-    public String sourceDir;
     public String processName;
+    public String sourceDir;
 }
 """,
     "de/robv/android/xposed/IXposedHookLoadPackage.java": """
@@ -97,8 +97,8 @@ package de.robv.android.xposed.callbacks;
 public abstract class XC_LoadPackage {
     public static class LoadPackageParam {
         public String packageName;
-        public ClassLoader classLoader;
         public String processName;
+        public ClassLoader classLoader;
         public boolean isFirstApplication;
         public android.content.pm.ApplicationInfo appInfo;
     }
