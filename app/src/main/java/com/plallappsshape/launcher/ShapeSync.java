@@ -43,6 +43,8 @@ public final class ShapeSync {
 
     private String mPath = "";
     private int mPatches;
+    /** Sizes whose build already failed: do not retry (and do not spam the log) until it changes. */
+    private final Map<Integer, Boolean> mFailed = new HashMap<>();
 
     // ------------------------------------------------------------------ helpers
 
@@ -105,6 +107,7 @@ public final class ShapeSync {
             platform.setOverride(path);
             mPath = path;
             mBuilt.clear();
+            mFailed.clear();
             mPatches = 0;
             Log.i("desktop shape: " + abbreviate(path));
             return true;
@@ -118,6 +121,7 @@ public final class ShapeSync {
         platform.setOverride(null);
         mPath = "";
         mBuilt.clear();
+        mFailed.clear();
         Log.i(why);
     }
 
@@ -139,8 +143,13 @@ public final class ShapeSync {
         if (cached != null) {
             return cached;
         }
+        if (mFailed.containsKey(size)) {
+            return null;
+        }
         Object built = platform.buildIconShape(mPath, size);
         if (built == null) {
+            mFailed.put(size, Boolean.TRUE);
+            Log.e("cannot build the drawer shape at " + size + "px, giving up", null);
             return null;
         }
         mBuilt.put(key, built);

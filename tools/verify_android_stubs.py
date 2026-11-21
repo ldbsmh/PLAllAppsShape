@@ -99,6 +99,7 @@ public class Activity extends Context {
     "android/os/Looper": """
 public class Looper {
     public static Looper getMainLooper() { return null; }
+    public static Looper myLooper() { return null; }
 }
 """,
     "android/os/Handler": """
@@ -127,6 +128,12 @@ public class Path {
 }
 """,
     "android/graphics/Matrix": "public class Matrix {}",
+    "android/graphics/Bitmap": """
+public class Bitmap {
+    public int getWidth() { return 0; }
+    public int getHeight() { return 0; }
+}
+""",
     "android/graphics/Canvas": "public class Canvas {}",
     "android/graphics/Paint": "public class Paint {}",
     "android/graphics/Rect": "public class Rect {}",
@@ -329,6 +336,12 @@ package com.android.launcher3.icons;
 public final class BitmapInfo {
     public final IconShape defaultIconShape = null;
     public final android.view.View owner = null;
+}
+""",
+    "com/android/launcher3/LauncherModel": """
+package com.android.launcher3;
+public class LauncherModel {
+    public void rebindCallbacks(String reason) {}
 }
 """,
     "com/android/launcher3/LauncherPrefs": """

@@ -112,13 +112,20 @@ public class ShapeSyncTest {
     }
 
     @Test
-    public void buildFailureIsNotCached() {
+    public void buildFailureIsCachedPerSizeAndRetriedOnChange() {
+        // A failing size must not be retried for every icon (that flooded the log with 88 stack
+        // traces); it is retried once the desktop shape changes.
         sync.applySnapshot(launcher, launcher.parseIconState());
         launcher.buildFails = true;
         assertNull(sync.drawerShape(launcher, 192));
+        int attempts = launcher.totalBuilds();
+        assertNull(sync.drawerShape(launcher, 192));
+        assertEquals(attempts, launcher.totalBuilds());
         assertEquals(0, sync.builtCount());
 
         launcher.buildFails = false;
+        launcher.path = "TEARDROP_PATH";
+        sync.applySnapshot(launcher, launcher.parseIconState());
         assertNotNull(sync.drawerShape(launcher, 192));
     }
 

@@ -2,6 +2,7 @@ package com.plallappsshape.launcher;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
 import android.graphics.Path;
 
 import java.lang.reflect.Constructor;
@@ -44,13 +45,20 @@ final class LauncherHooks implements ShapeSync.Platform {
     private volatile ShapeSync.Pending mState;
 
     private Object mThemeManager;
-    /** ModelInitializer#access$initializeDisplayEvents$refreshAndReloadLauncher(ModelInitializer, LauncherModel, String) */
-    private Method mRefreshAndReload;
+    /** LauncherModel#rebindCallbacks(String): the launcher's own "icons must be rebuilt" call. */
+    private Method mRebindCallbacks;
+    /** ActivityAllAppsContainerView#rebindAdapters(boolean): rebuilds the drawer list itself. */
+    private Method mRebindAdapters;
+    /** Live drawer container, captured from rebindAdapters(). */
+    private volatile java.lang.ref.WeakReference<Object> mAllAppsRef;
 
     /** {@code GraphicsUtils.generateIconShape(int, Path)} */
     private Method mGenerateIconShape;
     private Constructor<?> mGenericShapeCtor;
     private Method mAddToPath;
+
+    /** Icon bitmap size, learnt from the shapes the launcher already built (fallback only). */
+    private volatile int mFallbackIconSize = 192;
 
     private volatile String mOverridePath;
     private volatile boolean mOverrideActive;
@@ -59,8 +67,7 @@ final class LauncherHooks implements ShapeSync.Platform {
     /** Throttle for the reload request, so a burst of parseIconState calls cannot flood it. */
     private volatile long mLastDispatch;
 
-    /** ModelInitializer / LauncherModel instances, captured from initializeDisplayEvents(). */
-    private volatile Object mModelInitializer;
+    /** LauncherModel instance, captured from ModelInitializer.initializeDisplayEvents(). */
     private volatile Object mLauncherModel;
 
     private LauncherHooks(Context context, ClassLoader cl) {
@@ -108,33 +115,48 @@ final class LauncherHooks implements ShapeSync.Platform {
     private void hookThemeManager() {
         Class<?> themeManager = XposedHelpers.findClass(L3 + "graphics.ThemeManager", mCl);
         Class<?> iconState = XposedHelpers.findClass(L3 + "graphics.ThemeManager$IconState", mCl);
-        // The launcher's own "icons must be rebuilt" path, used when the theme changes.
+        /*
+         * The launcher reacts to a shape change with LauncherModel.rebindCallbacks("icon-shape-changed")
+         * (see ModelInitializer.initializeDisplayEvents: iconShapeData.forEach(MAIN_EXECUTOR, ...)).
+         * That is the call that actually rebuilds the icon views, so we make it ourselves.
+         * The LauncherModel instance is captured from initializeDisplayEvents(LauncherModel).
+         */
         try {
-            Class<?> modelInit = XposedHelpers.findClass(L3 + "model.ModelInitializer", mCl);
-            for (Method m : modelInit.getDeclaredMethods()) {
-                if (m.getName().contains("refreshAndReloadLauncher") && m.getParameterCount() == 3) {
-                    m.setAccessible(true);
-                    mRefreshAndReload = m;
-                    break;
+            Class<?> modelClass = XposedHelpers.findClass(L3 + "LauncherModel", mCl);
+            mRebindCallbacks = ShapeSync.method(modelClass, "rebindCallbacks", 1);
+            if (mRebindCallbacks == null) {
+                Log.e("rebindCallbacks not found", null);
+            }
+            // The drawer keeps its own adapter, so it has to be rebound as well.
+            try {
+                Class<?> allApps = XposedHelpers.findClass(
+                        L3 + "allapps.ActivityAllAppsContainerView", mCl);
+                mRebindAdapters = ShapeSync.method(allApps, "rebindAdapters", 1);
+                if (mRebindAdapters != null) {
+                    XposedBridge.hookMethod(mRebindAdapters, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            // Remember the live view so we can ask it to rebuild later.
+                            mAllAppsRef = new java.lang.ref.WeakReference<>(param.thisObject);
+                        }
+                    });
                 }
+            } catch (Throwable t) {
+                Log.d("rebindAdapters: " + t);
             }
-            if (mRefreshAndReload == null) {
-                Log.e("refreshAndReloadLauncher not found", null);
-            }
-            // Its static helper needs the instance and the model: both come from this hook.
+            Class<?> modelInit = XposedHelpers.findClass(L3 + "model.ModelInitializer", mCl);
             Method initEvents = ShapeSync.method(modelInit, "initializeDisplayEvents", 1);
             if (initEvents != null) {
                 XposedBridge.hookMethod(initEvents, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
-                        mModelInitializer = param.thisObject;
                         mLauncherModel = param.args[0];
-                        Log.d("model initializer captured");
+                        Log.d("launcher model captured");
                     }
                 });
             }
         } catch (Throwable t) {
-            Log.e("ModelInitializer", t);
+            Log.e("LauncherModel", t);
         }
         // ShapeDelegate(path) -> IconShape, exactly how the launcher does it.
         try {
@@ -190,8 +212,10 @@ final class LauncherHooks implements ShapeSync.Platform {
                         if (!HookEntry.enabled()) {
                             return;
                         }
-                        Object size = param.args[1];
-                        int px = size instanceof Integer ? (Integer) size : 192;
+                        int px = iconSizeOf(param.thisObject);
+                        if (px <= 0) {
+                            return;
+                        }
                         Object shape = mSync.drawerShape(LauncherHooks.this, px);
                         if (shape != null) {
                             param.args[2] = shape;
@@ -206,6 +230,27 @@ final class LauncherHooks implements ShapeSync.Platform {
             return;
         }
         Log.e("BitmapInfo.newIcon(Context,int,IconShape) not found", null);
+    }
+
+    /**
+     * The bitmap size for this BitmapInfo. NOTE: {@code newIcon}'s second argument is a flag set,
+     * not a size - passing it to {@code generateIconShape} made ShadowGenerator build a
+     * BlurMaskFilter with an illegal radius and every call threw.
+     */
+    private int iconSizeOf(Object bitmapInfo) {
+        try {
+            Field f = ShapeSync.field(bitmapInfo.getClass(), "icon");
+            Object icon = f == null ? null : f.get(bitmapInfo);
+            if (icon instanceof Bitmap) {
+                int w = ((Bitmap) icon).getWidth();
+                if (w > 0) {
+                    return w;
+                }
+            }
+        } catch (Throwable t) {
+            Log.d("iconSizeOf: " + t);
+        }
+        return mFallbackIconSize;
     }
 
     /** Stores the launcher's freshly parsed state and reacts only when the shape really changed. */
@@ -251,19 +296,46 @@ final class LauncherHooks implements ShapeSync.Platform {
         }
         mLastDispatch = now;
         try {
-            if (mRefreshAndReload == null) {
+            if (mRebindCallbacks == null) {
                 return;
             }
-            Object modelInitializer = mModelInitializer;
             Object model = mLauncherModel;
-            if (modelInitializer == null || model == null) {
-                Log.d("model initializer unknown yet");
+            if (model == null) {
+                Log.d("launcher model unknown yet");
                 return;
             }
-            mRefreshAndReload.invoke(null, modelInitializer, model, "plallappsshape");
-            Log.i("icons reloaded for the new shape");
+            mRebindCallbacks.invoke(model, "icon-shape-changed");
+            Log.i("icons rebound for the new shape");
+            rebindDrawer();
         } catch (Throwable t) {
             Log.e("reload icons", t);
+        }
+    }
+
+    /** Rebuilds the drawer's adapter so already-inflated rows pick up the new shape. */
+    private void rebindDrawer() {
+        try {
+            java.lang.ref.WeakReference<Object> ref = mAllAppsRef;
+            Object container = ref == null ? null : ref.get();
+            if (container == null || mRebindAdapters == null) {
+                return;
+            }
+            // Post to the main thread: this may be called from a hook on any thread.
+            android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+            final Object target = container;
+            main.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        mRebindAdapters.invoke(target, Boolean.TRUE);
+                        Log.i("drawer adapters rebound");
+                    } catch (Throwable t) {
+                        Log.e("rebind drawer", t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Log.e("rebindDrawer", t);
         }
     }
 
