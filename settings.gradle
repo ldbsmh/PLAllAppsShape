@@ -3,7 +3,6 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
-        maven { url 'https://jitpack.io' }
     }
 }
 
@@ -12,8 +11,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // Xposed API is published on jitpack
-        maven { url 'https://jitpack.io' }
     }
 }
 

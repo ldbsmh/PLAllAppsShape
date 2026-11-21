@@ -54,8 +54,9 @@ android {
 }
 
 dependencies {
-    // Provided by the Xposed/LSPosed framework on the device
-    compileOnly 'de.robv.android.xposed:api:82'
+    // Xposed API: de.robv.android.xposed:api:82 is no longer on Maven Central, tools/build_xposed_api.py
+    // generates it (bootstrap.sh runs that first). Provided by the framework at runtime anyway.
+    compileOnly files("${rootProject.buildDir}/xposed-api.jar")
 
     testImplementation 'junit:junit:4.13.2'
 }
