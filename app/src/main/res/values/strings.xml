@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">抽屉图标形状</string>
+    <string name="desc">抽屉（全部应用）里的图标会跟随桌面图标的形状设置。\n\n换形状：长按桌面 → 壁纸与样式 → 图标 → 形状。切换后打开抽屉即可看到效果，无需重启启动器。</string>
+    <string name="pref_enabled">启用（抽屉跟随桌面形状）</string>
+    <string name="pref_log">详细日志（标签 PLAllAppsShape）</string>
+    <string name="hint">LSPosed 作用域：Pixel 启动器 (com.google.android.apps.nexuslauncher)\n版本：1.0</string>
+</resources>

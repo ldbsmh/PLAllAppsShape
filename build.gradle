@@ -1,0 +1,4 @@
+// Module for Pixel Launcher's all-apps icon shape.
+plugins {
+    id 'com.android.application' version '8.13.2' apply false
+}

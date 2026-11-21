@@ -1,0 +1,12 @@
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.PREFER_SETTINGS
+    repositories {
+        google()
+        mavenCentral()
+        // Xposed API is published on jitpack only
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+rootProject.name = 'PLAllAppsShape'
+include ':app'

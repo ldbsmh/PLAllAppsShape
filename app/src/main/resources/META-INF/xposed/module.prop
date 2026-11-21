@@ -1,0 +1,5 @@
+/**
+ * Module description shown by LSPosed. Format: LSPosed-Module-Desc v1.
+ */
+mod-ver = 1
+description-file = assets/xposed/scope.list

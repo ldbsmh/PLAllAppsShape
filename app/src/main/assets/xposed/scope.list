@@ -1,0 +1,25 @@
+-----------------------------------------------------------------
+  _   _| |    / \ | | | |  __ _ _ __  _ __  ___  ___| |__   __ _ _ __   ___
+ | | | | |   / _ \| | | | / _` | '_ \| '_ \/ __|/ __| '_ \ / _` | '_ \ / _ \
+ | |_| | |__/ ___ \ |_| || (_| | |_) | |_) \__ \ (__| | | | (_| | |_) |  __/
+  \__,_|_____/_/   \_\__,_| \__,_| .__/| .__/|___/\___|_| |_|\__,_| .__/ \___|
+                                 |_|   |_|                        |_|
+-----------------------------------------------------------------
+【Auto】 Use Default Value
+The default values are suitable for most scenarios. Do not change if unnecessary.
+【说明】使用默认值
+默认值适用于大多数情况，请勿轻易更改。
+
+【Tab: Scope】
+Android 15+ (SDK 35) launchers run in a "T" (top-level) process, which
+Xposed modules cannot hook. This module works on Android 16 (SDK 36)
+and older. [SCOPE] Only requires the Pixel Launcher process.
+
+【作用域】
+Android 15+（SDK 35）的启动器以“T”进程运行，Xposed 无法注入；
+本模块适用于 Android 16（SDK 36）及以下。【作用域】仅需勾选 Pixel 启动器进程。
+
+【Tab: Launch】
+No configuration needed. Open the launcher's drawer after changing
+its desktop icon shape. [LAUNCH] No app to launch.
+【启动】无需配置。修改桌面图标形状后打开抽屉即可。

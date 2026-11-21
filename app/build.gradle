@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.plallappsshape'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.plallappsshape'
+        minSdk 31
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildFeatures {
+        buildConfig false
+    }
+
+    testOptions {
+        unitTests {
+            // owners / resources live in android.jar at test time: return defaults instead of throwing
+            returnDefaultValues = true
+        }
+    }
+
+    sourceSets {
+        // Empty classes named like the launcher's, so the JVM tests exercise the real name rules.
+        test.java.srcDirs 'test-placeholders'
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            // An unsigned release apk cannot be installed; sign with the debug key so CI artefacts
+            // (and local release builds) install on the device.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    // Provided by the Xposed/LSPosed framework on the device
+    compileOnly 'de.robv.android.xposed:api:82'
+
+    testImplementation 'junit:junit:4.13.2'
+}
