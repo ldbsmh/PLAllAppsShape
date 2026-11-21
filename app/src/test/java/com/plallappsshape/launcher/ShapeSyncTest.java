@@ -130,15 +130,6 @@ public class ShapeSyncTest {
     }
 
     @Test
-    public void disablingReleasesTheOverride() {
-        sync.applySnapshot(launcher, launcher.parseIconState());
-        launcher.forceOverride = true;
-        assertTrue(sync.applySnapshot(launcher, launcher.parseIconState()));
-        assertNull(sync.drawerShape(launcher, 192));
-        assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
-    }
-
-    @Test
     public void resolvingIsBoundedAndDoesNotLoop() {
         // Regression guard: applySnapshot() must be pure bookkeeping. It once re-entered
         // parseIconState() through its own hook, which recursed until the launcher died.

@@ -3,82 +3,85 @@
 LSPosed 模块：让 **Pixel 启动器的抽屉（全部应用）里的图标跟随桌面图标形状设置**。
 桌面选的是方圆/水滴/花朵，抽屉里就不会再是一排圆圈。
 
-![主页](docs/preview.png)
+没有设置界面，也没有启动图标——这个模块只做一件事，在 Xposed 管理器里启用即可。
 
 ---
 
-## 为什么能这么做（反编译结论）
-
-用 MT 反编译 `Pixel 启动器_17.apk`（`com.google.android.launcher3`，versionName 1.7 / code 907）确认的形状链路：
+## 反编译结论（Pixel 启动器 1.7 / launcher3）
 
 | 环节 | 类 / 方法 | 关键点 |
 | --- | --- | --- |
-| 形状来源 | `graphics.ThemeManager.parseIconState(IconState)` | 按 `PREF_ICON_SHAPE`（`backedUpItem("icon_shape_model","",ENCRYPTED)`，**加密**）在 `ShapesProvider.iconShapes` 里查表，`iconMask` 就是该条目的 **SVG path**，再由 `ShapeDelegate.Companion.pickBestShape(path)` 构建 `iconShape` |
+| 形状来源 | `ThemeManager.parseIconState(IconState)` | 按 `PREF_ICON_SHAPE`（`backedUpItem("icon_shape_model","",ENCRYPTED)`，**加密**）查 `ShapesProvider`，`iconMask` 就是该条目的 **SVG path**，再由 `ShapeDelegate.Companion.pickBestShape(path)` 构建 `iconShape`（一个 `ShapeDelegate`） |
 | 形状回退 | `icons.BitmapInfo.newIcon(ctx, flags, shape)` | `shape != null ? shape : this.defaultIconShape` —— **回退值就是抽屉的来源** |
 | 谁传形状 | `model.data.ItemInfoWithIcon.newIcon(ctx, flags)` | 桌面图标传 `iconShapeData.value`；**其余（抽屉/任务栏）传 `null`**，于是落到 `defaultIconShape` |
-| 形状实例 | `graphics.ShapeDelegate$GenericPathShape(String)` | 把路径字符串解析成 **100×100 坐标系**的 `basePath` |
-| 形状→像素 | `ShapeDelegate$GenericPathShape.addToPath(offX, offY, size, Path)` | `setScale(size/50)` + `postTranslate(offX, offY)` |
-| 形状缓存 | `icons.BaseIconFactory.defaultIconShapeCache` | **static** `SparseArray<WeakReference<IconShape>>`，按图标尺寸缓存 |
-| 缓存生成 | `BaseIconFactory$$ExternalSyntheticLambda0.invoke()` | `new AdaptiveIconDrawable(new ColorDrawable(BLACK), null).getIconMask()` → `GraphicsUtils.generateIconShape(size, path)` |
-| 真正绘制 | `icons.FastBitmapDrawableDelegate`（`FullBleedDrawableDelegate` / `PlaceHolderDrawableDelegate`） | `iconShape.shapeRenderer.render(canvas, paint)`，Path + BitmapShader |
+| 回退值从哪来 | `BaseIconFactory.defaultIconShapeCache` | **static** `SparseArray<WeakReference<IconShape>>`，由 `AdaptiveIconDrawable.getIconMask()` = 系统 `config_icon_mask`（圆形）构建 |
+| 真正绘制 | `FastBitmapDrawableDelegate` | `iconShape.shapeRenderer.render(canvas, paint)` |
 
-结论：
-1. 所有图标位图（`BitmapInfo`）都带一个 `defaultIconShape`，这个 `IconShape` 就是「一张 Path + renderer」，
-   **最终由它决定图标轮廓**；
-2. 桌面和抽屉**共用** `defaultIconShapeCache`，缓存内容来自系统 `config_icon_mask`（圆形）；
-3. `IconState.iconShape` 只影响 `loadPackageIcon()` 要不要用 `roundIconRes`——也就是"圆不圆"，
-   并不会把自定义 Path 画到抽屉图标上。
-
-所以抽屉要跟随桌面形状，需要同时做两件事：
-
-```
-① 抽屉图标的 BitmapInfo.defaultIconShape ← 桌面形状（ShapeDelegate$GenericPathShape → GraphicsUtils.generateIconShape）
-② Resources.getSystem().getString(config_icon_mask) ← 桌面形状的 SVG
-   （静态缓存里是 WeakReference，旧 IconShape 被回收后，下次取用就会用新 mask 重建）
-```
-
-模块就是这么干的，另外在 `ThemeManager.parseIconState` 之后调一次
-`iconShapeData.dispatchValue(...)` 让启动器重绘图标 —— **改完形状直接开抽屉就生效，不用重启启动器**。
+所以抽屉拿到的永远是系统 mask 的圆形。要让它跟随桌面，只需要在 `newIcon` 收到 `null` 形状时
+把它替换掉 —— 桌面图标自带形状，不受影响。
 
 ## 实现
 
 ```
-app/src/main/java/com/plallappsshape/
-├── launcher/
-│   ├── HookEntry.java     Xposed 入口：只注入 Pixel 启动器；读写模块偏好
-│   ├── LauncherHooks.java Xposed 胶水：hook BitmapInfo 构造 / ThemeManager.parseIconState /
-│   │                      Resources.getString(config_icon_mask)；实现 ShapeSync.Platform
-│   ├── ShapeSync.java     框架无关的核心（纯反射 + 接口），可单元测试
-│   └── Log.java
-└── settings/
-    └── SettingsActivity.java  开关界面（LSPosed 会把它加载进启动器进程）
+app/src/main/java/com/plallappsshape/launcher/
+├── HookEntry.java      Xposed 入口：只注入 Pixel 启动器
+├── LauncherHooks.java  hook 安装 + Platform 实现
+├── ShapeSync.java      框架无关的核心（纯反射），可单元测试
+└── Log.java            仅报错
 ```
 
-**抽屉图标识别**：`BitmapInfo` 不带 `IconOptions`，所以用 owner 判断（实测 owner 就是图标所在的 View）：
+三个 hook：
 
-* `folder.FolderIcon / Folder / PreviewItemManager / FolderOpenCloseAnimationListener` → 桌面，跳过
-* `allapps.AllAppsGridAdapter* / AllAppsRecyclerView / SearchRecyclerView` → 抽屉，替换形状
-* `BubbleTextView`（桌面/抽屉共用）→ 也替换，因为桌面图标绝大部分是走缓存逻辑、构造时没有 owner
-* 桌面专属 flag（下载进度 16、提取色 64）直接跳过
+1. **`BitmapInfo.newIcon(Context, int, IconShape)`** — `shape == null`（抽屉）时替换参数。
+   形状由 `ShapeDelegate$GenericPathShape(path).addToPath(0,0,size/2,p)` +
+   `GraphicsUtils.generateIconShape(size, p)` 构建，按像素尺寸缓存。**绘制时求值，不碰缓存**。
+2. **`Resources.getString(int)`** — 拦截 `config_icon_mask`，让静态形状缓存和图标阴影也用同一路径。
+3. **`ThemeManager.parseIconState`** — 只读取结果（**绝不回调**），用来知道当前形状和变更时机。
 
-**桌面形状为圆形时什么都不做**——系统 mask 本来就是圆。
+改形状后立即生效：调用启动器自己的 `LauncherModel.rebindCallbacks("icon-shape-changed")`
+（这正是 `ModelInitializer.initializeDisplayEvents` 里 `iconShapeData.forEach` 注册的那个回调），
+再在主线程 post `ActivityAllAppsContainerView.rebindAdapters(true)` 重建抽屉适配器。
+
+## 踩过的坑（都写在代码注释里了）
+
+1. **Xposed API 不能用桩**：手写的 `findAndHookMethod` 返回类型写成 `Method`（真实是
+   `XC_MethodHook$Unhook`），`invokestatic` 按完整描述符解析，一调用就 `NoSuchMethodError`。
+   现在 `app/libs/api-82.jar` 是官方原版，CI 还会检查它没被打进 APK。
+2. **不能 hook 里回调被 hook 的方法**：`parseIconState` 的 hook 里调 `parseIconState()` 会无限递归，
+   直接把启动器搞崩。现在 hook 只记录快照。
+3. **`BitmapInfo.defaultIconShape` 的类型是 `icons.IconShape`**，不是 `graphics.ShapeDelegate`，
+   两者不能直接赋值。
+4. **`newIcon` 第二个参数是 flags，不是尺寸**：当成尺寸传给 `generateIconShape` 会让
+   `ShadowGenerator` 构造非法的 `BlurMaskFilter`。
+5. **改 `BitmapInfo` 实例没用**：图标缓存复用它们，必须重启才生效；拦截 `newIcon` 参数才行。
 
 ## 安装
 
-1. 安装 APK（GitHub Actions 产物已用 debug key 签名，可直接装）
-2. LSPosed 里启用，作用域勾选 **Pixel 启动器**（`com.google.android.apps.nexuslauncher`），重启启动器一次
-3. 桌面 → 长按 → 壁纸与样式 → 图标 → **形状**：选方圆/水滴/花朵/自定义绘制都行
-4. 打开抽屉即可看到跟随；模块自身设置可从桌面图标进入（启用 / 详细日志）
+1. 安装 APK，在 LSPosed 里启用，作用域勾选 **Pixel 启动器**（`com.google.android.apps.nexuslauncher`）
+2. 重启启动器一次（首次安装后）
+3. 桌面 → 长按 → 壁纸与样式 → 图标 → **形状**：换形状后打开抽屉即生效，**不用再重启**
 
-> ⚠️ **Android 版本**：Pixel 启动器在 Android 15+（SDK 35）跑在「T 进程」，Xposed 无法注入；
-> 本模块适用于 **Android 16 及以下**。目标设备（SDK 37 的 ROM）如果启动器也是 T 进程，模块会被
-> 正常加载但 hook 不到，日志里会看到 `ThemeManager.parseIconState not found`。
+> ⚠️ Android 15+（SDK 35）的启动器跑在「T 进程」，Xposed 无法注入。本模块适用于 Android 16 及以下。
 
-## 与 PixelLauncherEnhanced 共存
+## 排查
 
-两者都改图标形状，LSPosed 允许同时启用，最后生效的 hook 说了算。本模块只看
-`iconShape` / `config_icon_mask`，PLE 的 `IconShapes` 还会改 `folderShape` 与 `ShapesProvider`，
-**推荐只启用其一**避免互相覆盖。
+默认只输出错误。要看详细日志，把 `Log.VERBOSE` 改成 `true` 重新编译，然后：
+
+```bash
+adb logcat -s PLAllAppsShape
+```
+
+正常时的完整流程（verbose 模式）：
+
+```
+desktop shape: M53.689 0.82 L...     ← 读到桌面形状
+drawer shape built for 221px (1)     ← 按尺寸构建
+icons rebound for the new shape      ← 触发启动器重建
+drawer adapters rebound              ← 抽屉适配器重建
+```
+
+错误信息会直接说明缺什么，例如
+`LauncherModel.rebindCallbacks not found: a shape change needs a restart`。
 
 ## 构建
 
@@ -86,29 +89,14 @@ app/src/main/java/com/plallappsshape/
 sh bootstrap.sh assembleDebug    # 需要 Android SDK 36 + JDK 17
 ```
 
-> 为什么不是 `./gradlew`：wrapper 与 `de.robv.android.xposed:api:82` 都不在仓库里（前者是二进制，
-> 后者已从 Maven Central 下线）。`bootstrap.sh` 会拉 Gradle wrapper，并用
-> `tools/build_xposed_api.py` 生成 compileOnly 的 Xposed API jar。
-
-没有 SDK 也能先自查（本仓库自带两个脚本，纯 JDK）：
+没有 SDK 也能先自查（纯 JDK）：
 
 ```bash
-JAVAC=$JAVA_HOME/bin/javac ./verify_android.sh   # 用桩类对真实源码做类型检查（84 个类）
+JAVAC=$JAVA_HOME/bin/javac ./verify_android.sh   # 用桩类对真实源码做类型检查
 JAVA=... JAVAC=... ./verify_tests.sh             # 跑 ShapeSyncTest（12 个用例）
 ```
 
 CI：`.github/workflows/build.yml`，push / PR / 手动触发，产物在 Actions → Artifacts。
-
-## 排查
-
-```bash
-adb logcat -s PLAllAppsShape     # 需在模块设置里打开「详细日志」
-```
-
-* `hooks installed` + `BitmapInfo constructors hooked: 2` → 注入成功
-* `desktop shape: key=icon_shape_squircle path=M...` → 已取到桌面形状
-* `drawer icon shape applied (n)` → 抽屉图标已替换（最多打印 5 次）
-* `config_icon_mask overridden` → 系统 mask 已接管
 
 ## License
 

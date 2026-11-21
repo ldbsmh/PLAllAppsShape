@@ -3,42 +3,32 @@ package com.plallappsshape.launcher;
 import de.robv.android.xposed.XposedBridge;
 
 /**
- * Logger: Xposed log always, logcat when verbose.
+ * Logging policy: errors only.
  *
- * <p>{@link #i} de-duplicates identical messages, because a hook that fires per icon can otherwise
- * flood the Xposed log (a few thousand identical lines from the launcher's main thread is a stall).
+ * <p>This module has no settings screen, so there is nothing to toggle at runtime. Set
+ * {@link #VERBOSE} to true and rebuild when debugging; the verbose lines (shape paths, build
+ * counts, rebind steps) then go to logcat and the Xposed log as well.
  */
 final class Log {
     private static final String TAG = "PLAllAppsShape";
-    static volatile boolean verbose;
 
-    private static String sLastInfo;
-    private static long sLastInfoAt;
-    private static int sSuppressed;
+    /** Flip to true for a diagnostic build. Errors are logged either way. */
+    static final boolean VERBOSE = false;
 
     private Log() {
     }
 
     static void d(String msg) {
-        if (verbose) {
+        if (VERBOSE) {
             android.util.Log.d(TAG, msg);
         }
     }
 
-    static synchronized void i(String msg) {
-        long now = System.currentTimeMillis();
-        if (msg.equals(sLastInfo) && now - sLastInfoAt < 3_000L) {
-            sSuppressed++;
-            return;
+    static void i(String msg) {
+        if (VERBOSE) {
+            android.util.Log.i(TAG, msg);
+            XposedBridge.log("[" + TAG + "] " + msg);
         }
-        if (sSuppressed > 0) {
-            android.util.Log.i(TAG, "(+" + sSuppressed + " identical)");
-            sSuppressed = 0;
-        }
-        sLastInfo = msg;
-        sLastInfoAt = now;
-        android.util.Log.i(TAG, msg);
-        XposedBridge.log("[" + TAG + "] " + msg);
     }
 
     static void e(String msg, Throwable t) {

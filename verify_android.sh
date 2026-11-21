@@ -24,8 +24,7 @@ mkdir -p "$OUT/src/com/plallappsshape"
   echo '}'
 } > "$OUT/src/com/plallappsshape/R.java"
 
-cp -r app/src/main/java/com/plallappsshape/launcher app/src/main/java/com/plallappsshape/settings \
-    "$OUT/src/com/plallappsshape/"
+cp -r app/src/main/java/com/plallappsshape/launcher "$OUT/src/com/plallappsshape/"
 
 JAVAC=${JAVAC:-javac}
 # Real Xposed API on the classpath: never a hand-written stub (a wrong return type there compiles

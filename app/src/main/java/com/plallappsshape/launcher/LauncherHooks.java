@@ -37,7 +37,6 @@ final class LauncherHooks implements ShapeSync.Platform {
 
     private static volatile LauncherHooks sInstance;
 
-    private final Context mContext;
     private final ClassLoader mCl;
     private final ShapeSync mSync = new ShapeSync();
 
@@ -62,7 +61,6 @@ final class LauncherHooks implements ShapeSync.Platform {
 
     private volatile String mOverridePath;
     private volatile boolean mOverrideActive;
-    private volatile boolean mForceOverride;
 
     /** Throttle for the reload request, so a burst of parseIconState calls cannot flood it. */
     private volatile long mLastDispatch;
@@ -70,8 +68,7 @@ final class LauncherHooks implements ShapeSync.Platform {
     /** LauncherModel instance, captured from ModelInitializer.initializeDisplayEvents(). */
     private volatile Object mLauncherModel;
 
-    private LauncherHooks(Context context, ClassLoader cl) {
-        mContext = context;
+    private LauncherHooks(ClassLoader cl) {
         mCl = cl;
     }
 
@@ -79,14 +76,23 @@ final class LauncherHooks implements ShapeSync.Platform {
         if (sInstance != null) {
             return;
         }
-        LauncherHooks hooks = new LauncherHooks(context, cl);
+        // context is unused for now: every hook works through the launcher's own objects.
+        LauncherHooks hooks = new LauncherHooks(cl);
         sInstance = hooks;
         try {
             hooks.hookThemeManager();
             hooks.hookNewIcon();
-            Probe.state(context, "hook 已安装（" + (hooks.mGenerateIconShape != null ? "形状" : "缺形状")
-                    + "/" + (hooks.mNewIconHooked ? "图标" : "缺图标") + "）");
             Log.i("hooks installed");
+            // Report what is missing once, so a broken install is visible without a debug build.
+            if (hooks.mGenerateIconShape == null) {
+                Log.e("GraphicsUtils.generateIconShape not found: the drawer shape cannot be built", null);
+            }
+            if (!hooks.mNewIconHooked) {
+                Log.e("BitmapInfo.newIcon(Context,int,IconShape) not found: nothing to patch", null);
+            }
+            if (hooks.mRebindCallbacks == null) {
+                Log.e("LauncherModel.rebindCallbacks not found: a shape change needs a restart", null);
+            }
         } catch (Throwable t) {
             Log.e("install", t);
             sInstance = null;
@@ -94,21 +100,6 @@ final class LauncherHooks implements ShapeSync.Platform {
     }
 
     private boolean mNewIconHooked;
-
-    /** Called when the module settings change (enable / disable / log). */
-    static void requestRefresh() {
-        LauncherHooks hooks = sInstance;
-        if (hooks == null) {
-            return;
-        }
-        boolean enabled = HookEntry.enabled();
-        hooks.mForceOverride = !enabled && hooks.mOverrideActive;
-        Log.i("settings changed, enabled=" + enabled);
-        if (!enabled) {
-            hooks.mSync.applySnapshot(hooks, null);
-            hooks.dispatchIconShape(true);
-        }
-    }
 
     // ---------------------------------------------------------------- hooks
 
@@ -209,9 +200,6 @@ final class LauncherHooks implements ShapeSync.Platform {
                         if (param.args[2] != null) {
                             return; // workspace icon: it brings its own shape
                         }
-                        if (!HookEntry.enabled()) {
-                            return;
-                        }
                         int px = iconSizeOf(param.thisObject);
                         if (px <= 0) {
                             return;
@@ -270,11 +258,7 @@ final class LauncherHooks implements ShapeSync.Platform {
                     new ShapeSync.Pending((String) mask, pathOf(shape), shape);
             mState = pending;
 
-            if (!HookEntry.enabled()) {
-                return;
-            }
             if (mSync.applySnapshot(this, pending)) {
-                Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(mSync.path()));
                 dispatchIconShape(false);
             }
         } catch (Throwable t) {
@@ -424,10 +408,4 @@ final class LauncherHooks implements ShapeSync.Platform {
         }
     }
 
-    @Override
-    public boolean forceOverride() {
-        boolean force = mForceOverride;
-        mForceOverride = false;
-        return force;
-    }
 }

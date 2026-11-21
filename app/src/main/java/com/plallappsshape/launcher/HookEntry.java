@@ -1,41 +1,28 @@
 package com.plallappsshape.launcher;
 
 import android.app.Application;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.SharedPreferences;
 
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
  * Entry point (META-INF/xposed/java_init.list). Only the launcher process is hooked.
  *
- * <p>Preferences live in the launcher's own storage and are written by
- * {@code com.plallappsshape.settings.SettingsActivity}, which LSPosed also loads into the launcher
- * process, so both sides see the same file.
+ * <p>There is no settings screen: the module does one thing, so it is either enabled in the
+ * Xposed manager or it is not. Nothing to configure, nothing to store.
  */
 public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
         de.robv.android.xposed.IXposedHookZygoteInit {
 
     static final String LAUNCHER_PKG = "com.google.android.apps.nexuslauncher";
-    static final String PREFS = "plallappsshape";
-    static final String KEY_ENABLED = "enabled";
-    static final String KEY_LOG = "verbose_log";
-    static final String ACTION_RELOAD = "com.plallappsshape.RELOAD";
 
-    private static final java.util.concurrent.atomic.AtomicBoolean sLoadedOnce =
-            new java.util.concurrent.atomic.AtomicBoolean();
     private static volatile boolean sReady;
-    private static volatile SharedPreferences sPrefs;
 
     @Override
     public void initZygote(StartupParam startupParam) {
-        Log.i("module loaded: " + startupParam.modulePath);
+        Log.i("module loaded");
     }
 
     @Override
@@ -43,10 +30,7 @@ public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
         if (lpparam.classLoader == null || !LAUNCHER_PKG.equals(lpparam.packageName)) {
             return;
         }
-        if (sLoadedOnce.compareAndSet(false, true)) {
-            // One line per launcher process start: proves the module reached the launcher.
-            XposedBridge.log("[PLAllAppsShape] loaded into " + lpparam.processName);
-        }
+        Log.i("loaded into " + lpparam.processName);
         try {
             XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
                 @Override
@@ -55,43 +39,11 @@ public class HookEntry implements de.robv.android.xposed.IXposedHookLoadPackage,
                         return;
                     }
                     sReady = true;
-                    Context ctx = (Context) param.thisObject;
-                    Probe.state(ctx, "已加载进启动器 " + lpparam.processName);
-                    initPrefs(ctx);
-                    LauncherHooks.install(ctx, lpparam.classLoader);
+                    LauncherHooks.install((Context) param.thisObject, lpparam.classLoader);
                 }
             });
         } catch (Throwable t) {
             Log.e("entry hook", t);
-        }
-    }
-
-    static boolean enabled() {
-        SharedPreferences p = sPrefs;
-        return p == null || p.getBoolean(KEY_ENABLED, true);
-    }
-
-    private static void initPrefs(Context ctx) {
-        try {
-            sPrefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            Log.verbose = sPrefs.getBoolean(KEY_LOG, false);
-            sPrefs.registerOnSharedPreferenceChangeListener(
-                    new SharedPreferences.OnSharedPreferenceChangeListener() {
-                        @Override
-                        public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
-                            Log.verbose = prefs.getBoolean(KEY_LOG, false);
-                            LauncherHooks.requestRefresh();
-                        }
-                    });
-            // SettingsActivity can also poke the launcher, e.g. to force an icon redraw.
-            ctx.registerReceiver(new BroadcastReceiver() {
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    LauncherHooks.requestRefresh();
-                }
-            }, new IntentFilter(ACTION_RELOAD), Context.RECEIVER_EXPORTED);
-        } catch (Throwable t) {
-            Log.e("init prefs", t);
         }
     }
 }

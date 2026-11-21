@@ -82,10 +82,6 @@ public final class ShapeSync {
      */
     public synchronized boolean applySnapshot(Platform platform, Pending state) {
         try {
-            if (platform.forceOverride()) {
-                reset(platform, "override released");
-                return true;
-            }
             if (state == null || state.shape == null) {
                 return false;
             }
@@ -189,9 +185,6 @@ public final class ShapeSync {
          * @return whether an override is active
          */
         boolean setOverride(String path);
-
-        /** One-shot: the user disabled the module and the mask override must be released. */
-        boolean forceOverride();
     }
 
     /** Snapshot of {@code ThemeManager$IconState}. */

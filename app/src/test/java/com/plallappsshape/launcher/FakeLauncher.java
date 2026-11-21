@@ -34,7 +34,6 @@ final class FakeLauncher implements Platform {
     String mask = "M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0Z";
     String path = "M0 0H100V100H0Z";
     Object shape = new Object();
-    boolean forceOverride;
     boolean stateAvailable = true;
     boolean buildFails;
 
@@ -58,13 +57,6 @@ final class FakeLauncher implements Platform {
     public boolean setOverride(String svgPath) {
         overrides.add(String.valueOf(svgPath));
         return svgPath != null;
-    }
-
-    @Override
-    public boolean forceOverride() {
-        boolean f = forceOverride;
-        forceOverride = false;
-        return f;
     }
 
     int totalBuilds() {
