@@ -31,6 +31,10 @@
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
+        <!-- legacy tools (Xposed Installer / old SS) keep the scope in assets/xposed_scope -->
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
     </application>
 
 </manifest>
