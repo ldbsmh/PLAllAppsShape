@@ -37,10 +37,11 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
 
       # The app is signed with the throw-away debug key so the artefact installs.
-      - name: Assemble debug
-        run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug test --stacktrace
+      - name: Bootstrap Gradle wrapper
+        run: sh ./bootstrap.sh --setup-only
+
+      - name: Assemble debug + unit tests
+        run: ./gradlew --no-daemon assembleDebug test --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
