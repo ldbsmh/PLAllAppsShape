@@ -4,10 +4,15 @@
     <!--
       No launcher activity on purpose: this module does exactly one thing and has no settings.
       Enable it in the Xposed manager and it works; there is nothing to open.
+
+      android:icon must stay: the Xposed manager draws every module row with
+      ApplicationInfo.loadIcon(), and a module without an icon shows up blank or not at all
+      depending on the manager build.
     -->
     <application
         android:allowBackup="false"
         android:hasCode="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true">
 
@@ -23,6 +28,9 @@
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
     </application>
 
 </manifest>

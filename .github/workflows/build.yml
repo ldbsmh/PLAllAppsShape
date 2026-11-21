@@ -49,6 +49,11 @@ jobs:
           python3 tools/check_apk_classes.py app/build/outputs/apk/debug/app-debug.apk
           python3 tools/inspect_module_apk.py app/build/outputs/apk/debug/app-debug.apk
 
+      # Guard: these are the files the Xposed manager needs to list the module at all. Losing one
+      # makes the module disappear from the manager, which is not obvious from a successful build.
+      - name: Verify module metadata
+        run: python3 tools/check_module_metadata.py app/build/outputs/apk/debug/app-debug.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

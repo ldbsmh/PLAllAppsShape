@@ -1,0 +1,14 @@
+# LSPosed module description (Module Description List v1). Keep every value free of special chars.
+mod-ver = 1
+scope-min-ver = 93
+
+[Description]
+zh-CN = 让 Pixel 启动器的抽屉(全部应用)图标跟随桌面图标形状设置。改完形状打开抽屉即生效，无需重启启动器。
+en-US = Makes Pixel Launcher drawer (all apps) icons follow the desktop icon shape. Takes effect when you open the drawer, no launcher restart needed.
+
+[Scope]
+com.google.android.apps.nexuslauncher = Pixel 启动器 / Pixel Launcher
+
+[Notice]
+zh-CN = 仅适用于 Android 16 及以下的 Pixel 启动器；Android 15+ 的启动器以 T 进程运行，Xposed 无法注入。
+en-US = For Pixel Launcher on Android 16 and older; on Android 15+ the launcher runs in a T process that Xposed cannot hook.
