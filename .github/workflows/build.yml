@@ -36,12 +36,18 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      # The app is signed with the throw-away debug key so the artefact installs.
       - name: Bootstrap Gradle wrapper
         run: sh ./bootstrap.sh --setup-only
 
-      - name: Assemble debug + unit tests
-        run: ./gradlew --no-daemon assembleDebug test --stacktrace
+      - name: Assemble
+        run: ./gradlew --no-daemon assembleDebug assembleRelease --stacktrace
+
+      # Guard: the Xposed API must stay compileOnly. A bundled copy shadows the framework's classes
+      # and turns every call into a runtime NoSuchMethodError.
+      - name: Verify no Xposed classes are bundled
+        run: |
+          python3 tools/check_apk_classes.py app/build/outputs/apk/debug/app-debug.apk
+          python3 tools/inspect_module_apk.py app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

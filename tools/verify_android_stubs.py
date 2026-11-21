@@ -344,70 +344,9 @@ public interface Item {}
 """,
 }
 
-XP = {
-    "de/robv/android/xposed/IXposedHookLoadPackage": """
-package de.robv.android.xposed;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
-public interface IXposedHookLoadPackage {
-    void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable;
-}
-""",
-    "de/robv/android/xposed/IXposedHookZygoteInit": """
-package de.robv.android.xposed;
-public interface IXposedHookZygoteInit {
-    void initZygote(StartupParam startupParam) throws Throwable;
-    class StartupParam {
-        public String modulePath;
-    }
-}
-""",
-    "de/robv/android/xposed/XposedBridge": """
-package de.robv.android.xposed;
-import java.lang.reflect.Member;
-public final class XposedBridge {
-    public static void log(String text) {}
-    public static Object hookMethod(Member m, XC_MethodHook hook) { return null; }
-    public static void hookAllMethods(Class<?> c, String name, XC_MethodHook hook) {}
-}
-""",
-    "de/robv/android/xposed/XC_MethodHook": """
-package de.robv.android.xposed;
-public abstract class XC_MethodHook {
-    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
-    protected void afterHookedMethod(MethodHookParam param) throws Throwable {}
-    public static class MethodHookParam {
-        public Object thisObject;
-        public Object[] args;
-        public Object getResult() { return null; }
-        public void setResult(Object r) {}
-    }
-}
-""",
-    "de/robv/android/xposed/XposedHelpers": """
-package de.robv.android.xposed;
-public final class XposedHelpers {
-    public static Class<?> findClass(String name, ClassLoader cl) { return null; }
-    public static Object callMethod(Object o, String name, Object... args) { return null; }
-    public static Object getObjectField(Object o, String name) { return null; }
-    public static void setObjectField(Object o, String name, Object v) {}
-    public static Object getStaticObjectField(Class<?> c, String name) { return null; }
-    public static java.lang.reflect.Method findMethodExact(Class<?> c, String name, Class<?>... p) { return null; }
-    public static java.lang.reflect.Method findAndHookMethod(Class<?> c, String name,
-            Object... paramsAndCallback) { return null; }
-}
-""",
-    "de/robv/android/xposed/callbacks/XC_LoadPackage": """
-package de.robv.android.xposed.callbacks;
-public abstract class XC_LoadPackage {
-    public static class LoadPackageParam {
-        public String packageName;
-        public String processName;
-        public ClassLoader classLoader;
-        public android.content.pm.ApplicationInfo appInfo;
-    }
-}
-""",
-}
+# The Xposed API itself is NOT stubbed: libs/api-82.jar is the real thing. A stub with a wrong
+# return type compiles fine and then dies at runtime with NoSuchMethodError, which is exactly the
+# bug that shipped in 1.0.
 
 
 def write(base, fq_path, src):
@@ -418,7 +357,7 @@ def write(base, fq_path, src):
 
 
 def main():
-    for group in (STUBS, LAUNCHER, XP):
+    for group in (STUBS, LAUNCHER):
         for name, src in group.items():
             if not src.strip():
                 continue

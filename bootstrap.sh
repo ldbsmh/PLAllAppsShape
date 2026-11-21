@@ -1,13 +1,14 @@
 #!/bin/sh
-# Bootstrap: Gradle wrapper + compileOnly Xposed API jar, then run Gradle.
-# The wrapper jar and the API jar are not vendored (binary/derived); only this script is.
+# Bootstrap the Gradle wrapper, then run Gradle.
+# The wrapper jar is not vendored (it is a binary blob); the Xposed API jar IS vendored in
+# app/libs/api-82.jar, because that artifact was removed from Maven Central and every mirror that
+# still has it is unofficial.
 set -e
 cd "$(dirname "$0")"
 GRADLE_VERSION=8.13
 
-mkdir -p gradle/wrapper build
-
 if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+  mkdir -p gradle/wrapper
   echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
       > gradle/wrapper/gradle-wrapper.properties
   curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
@@ -15,15 +16,16 @@ if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
 fi
 
 if [ ! -x gradlew ]; then
-  cat > gradlew <<'EOF'
+  cat > gradlew <<'GRADLEW'
 #!/bin/sh
 exec java -Xmx2g -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain "$@"
-EOF
+GRADLEW
   chmod +x gradlew
 fi
 
-if [ ! -f build/xposed-api.jar ]; then
-  python3 tools/build_xposed_api.py build/xposed-api.jar
+if [ ! -f app/libs/api-82.jar ]; then
+  echo "error: app/libs/api-82.jar is missing (the Xposed API is vendored, see README)" >&2
+  exit 1
 fi
 
 case "$1" in

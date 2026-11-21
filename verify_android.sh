@@ -28,6 +28,9 @@ cp -r app/src/main/java/com/plallappsshape/launcher app/src/main/java/com/plalla
     "$OUT/src/com/plallappsshape/"
 
 JAVAC=${JAVAC:-javac}
+# Real Xposed API on the classpath: never a hand-written stub (a wrong return type there compiles
+# fine and only fails at runtime with NoSuchMethodError).
 $JAVAC -Xlint:-options -source 11 -target 11 -nowarn -d "$OUT/classes" \
+    -cp app/libs/api-82.jar \
     $(find "$OUT/src" -name '*.java')
 echo "android source check: OK ($(find "$OUT/classes" -name '*.class' | wc -l) classes)"

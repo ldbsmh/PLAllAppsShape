@@ -10,29 +10,28 @@ android {
         applicationId 'com.plallappsshape'
         minSdk 31
         targetSdk 36
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
     }
 
     buildFeatures {
         buildConfig false
     }
 
-    // Ship both module entry descriptions: assets/xposed_init (classic Xposed API, used by the
-    // Xposed manager / older LSPosed) and META-INF/xposed/*.list (LSPosed >= 93). The library
-    // resources are packaged as-is; nothing else uses java resources in this module.
-    sourceSets {
-        main {
-            resources {
-                srcDirs 'src/main/resources'
-            }
-        }
-    }
-
     testOptions {
         unitTests {
             // owners / resources live in android.jar at test time: return defaults instead of throwing
             returnDefaultValues = true
+            all { t ->
+                // The framework-free core is covered by ./verify_tests.sh (plain JVM). AGP runs unit
+                // tests against a stub android.jar that shadows the hand-written launcher doubles,
+                // so failures there must not block the apk.
+                t.ignoreFailures = true
+                t.testLogging {
+                    events 'passed', 'failed', 'skipped'
+                    exceptionFormat 'full'
+                }
+            }
         }
     }
 
@@ -57,25 +56,14 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
-
-    testOptions {
-        unitTests.all { t ->
-            // The framework-free core is covered by ./verify_tests.sh (plain JVM, no stubs on the
-            // runtime classpath). AGP runs unit tests against a stub android.jar whose packages
-            // shadow the hand-written launcher doubles, so failures there must not block the APK.
-            t.ignoreFailures = true
-            t.testLogging {
-                events 'passed', 'failed', 'skipped'
-                exceptionFormat 'full'
-            }
-        }
-    }
 }
 
 dependencies {
-    // Xposed API: de.robv.android.xposed:api:82 is no longer on Maven Central, tools/build_xposed_api.py
-    // generates it (bootstrap.sh runs that first). Provided by the framework at runtime anyway.
-    compileOnly files("${rootProject.buildDir}/xposed-api.jar")
+    // The real Xposed API (de.robv.android.xposed:api:82), vendored because it was pulled from Maven
+    // Central. compileOnly: the framework provides these classes at runtime, and bundling them would
+    // shadow the framework's own (a hand-written stub with a wrong return type cost us a
+    // NoSuchMethodError on findAndHookMethod).
+    compileOnly files('libs/api-82.jar')
 
     testImplementation 'junit:junit:4.13.2'
 }
