@@ -49,9 +49,17 @@ android {
 }
 
 // The unit tests exercise only the framework-free core. Their launcher doubles are hand written
-// (app/src/test/java/com/android/...), so the test classpath does not depend on android.jar content.
+// (app/src/test/java/com/android/...). The stub android.jar exports every package, so it must not
+// be on the test runtime classpath: only the system framework jar (never part of unit tests).
 tasks.withType(Test).configureEach {
     useJUnit()
+    doFirst {
+        classpath = files(
+                sourceSets.test.output.classesDirs,
+                layout.buildDirectory.dir('intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+                configurations.testRuntimeClasspath
+        )
+    }
 }
 
 dependencies {
