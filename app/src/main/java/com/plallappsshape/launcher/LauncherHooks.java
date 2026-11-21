@@ -2,6 +2,7 @@ package com.plallappsshape.launcher;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Path;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -14,10 +15,12 @@ import de.robv.android.xposed.XposedHelpers;
 /**
  * Launcher-side glue: installs the hooks and implements {@link ShapeSync.Platform}.
  *
- * <p>See {@link ShapeSync} for the decompiled pipeline. Two hooks do the work:
+ * <p>See {@link ShapeSync} for the decompiled pipeline and for the two traps this design avoids.
+ * Two hooks do the work:
  * <ul>
- *   <li>{@code BitmapInfo}'s constructors: replace {@code defaultIconShape} with the workspace
- *       shape. Workspace icons pass their own shape to {@code newIcon()}, so they are unaffected;</li>
+ *   <li>{@code BitmapInfo.newIcon(Context, int, IconShape)}: when the caller passes a null shape -
+ *       which is what the drawer does - the argument is replaced with the desktop shape. This runs
+ *       per draw, so a new shape applies immediately instead of after a restart;</li>
  *   <li>{@code Resources.getString(int)} for {@code config_icon_mask}: so the launcher's static
  *       {@code defaultIconShapeCache} (weak references) rebuilds with the same path.</li>
  * </ul>
@@ -41,17 +44,24 @@ final class LauncherHooks implements ShapeSync.Platform {
     private volatile ShapeSync.Pending mState;
 
     private Object mThemeManager;
-    private Field mIconShapeDataField;
-    private Method mDispatchValue;
+    /** ModelInitializer#access$initializeDisplayEvents$refreshAndReloadLauncher(ModelInitializer, LauncherModel, String) */
+    private Method mRefreshAndReload;
 
-    private Field mDefaultIconShapeField;
+    /** {@code GraphicsUtils.generateIconShape(int, Path)} */
+    private Method mGenerateIconShape;
+    private Constructor<?> mGenericShapeCtor;
+    private Method mAddToPath;
 
     private volatile String mOverridePath;
     private volatile boolean mOverrideActive;
     private volatile boolean mForceOverride;
 
-    /** Throttle for the redraw request, so a burst of parseIconState calls cannot flood it. */
+    /** Throttle for the reload request, so a burst of parseIconState calls cannot flood it. */
     private volatile long mLastDispatch;
+
+    /** ModelInitializer / LauncherModel instances, captured from initializeDisplayEvents(). */
+    private volatile Object mModelInitializer;
+    private volatile Object mLauncherModel;
 
     private LauncherHooks(Context context, ClassLoader cl) {
         mContext = context;
@@ -66,15 +76,17 @@ final class LauncherHooks implements ShapeSync.Platform {
         sInstance = hooks;
         try {
             hooks.hookThemeManager();
-            hooks.hookBitmapInfo();
-            Probe.state(context, "hook 已安装（" + (hooks.mIconShapeDataField != null ? "形状" : "缺形状")
-                    + "/" + (hooks.mDefaultIconShapeField != null ? "图标" : "缺图标") + "）");
+            hooks.hookNewIcon();
+            Probe.state(context, "hook 已安装（" + (hooks.mGenerateIconShape != null ? "形状" : "缺形状")
+                    + "/" + (hooks.mNewIconHooked ? "图标" : "缺图标") + "）");
             Log.i("hooks installed");
         } catch (Throwable t) {
             Log.e("install", t);
             sInstance = null;
         }
     }
+
+    private boolean mNewIconHooked;
 
     /** Called when the module settings change (enable / disable / log). */
     static void requestRefresh() {
@@ -86,7 +98,6 @@ final class LauncherHooks implements ShapeSync.Platform {
         hooks.mForceOverride = !enabled && hooks.mOverrideActive;
         Log.i("settings changed, enabled=" + enabled);
         if (!enabled) {
-            // Release the mask override so the launcher returns to its own shape.
             hooks.mSync.applySnapshot(hooks, null);
             hooks.dispatchIconShape(true);
         }
@@ -97,12 +108,44 @@ final class LauncherHooks implements ShapeSync.Platform {
     private void hookThemeManager() {
         Class<?> themeManager = XposedHelpers.findClass(L3 + "graphics.ThemeManager", mCl);
         Class<?> iconState = XposedHelpers.findClass(L3 + "graphics.ThemeManager$IconState", mCl);
-        mIconShapeDataField = ShapeSync.field(themeManager, "iconShapeData");
+        // The launcher's own "icons must be rebuilt" path, used when the theme changes.
         try {
-            Class<?> refClass = XposedHelpers.findClass(L3 + "util.MutableListenableRef", mCl);
-            mDispatchValue = ShapeSync.method(refClass, "dispatchValue", 1);
+            Class<?> modelInit = XposedHelpers.findClass(L3 + "model.ModelInitializer", mCl);
+            for (Method m : modelInit.getDeclaredMethods()) {
+                if (m.getName().contains("refreshAndReloadLauncher") && m.getParameterCount() == 3) {
+                    m.setAccessible(true);
+                    mRefreshAndReload = m;
+                    break;
+                }
+            }
+            if (mRefreshAndReload == null) {
+                Log.e("refreshAndReloadLauncher not found", null);
+            }
+            // Its static helper needs the instance and the model: both come from this hook.
+            Method initEvents = ShapeSync.method(modelInit, "initializeDisplayEvents", 1);
+            if (initEvents != null) {
+                XposedBridge.hookMethod(initEvents, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        mModelInitializer = param.thisObject;
+                        mLauncherModel = param.args[0];
+                        Log.d("model initializer captured");
+                    }
+                });
+            }
         } catch (Throwable t) {
-            Log.e("MutableListenableRef", t);
+            Log.e("ModelInitializer", t);
+        }
+        // ShapeDelegate(path) -> IconShape, exactly how the launcher does it.
+        try {
+            Class<?> utils = XposedHelpers.findClass(L3 + "icons.GraphicsUtils", mCl);
+            mGenerateIconShape = ShapeSync.method(utils, "generateIconShape", 2);
+            Class<?> generic = XposedHelpers.findClass(
+                    L3 + "graphics.ShapeDelegate$GenericPathShape", mCl);
+            mGenericShapeCtor = ShapeSync.ctor(generic, String.class);
+            mAddToPath = ShapeSync.method(generic, "addToPath", 4);
+        } catch (Throwable t) {
+            Log.e("shape builders", t);
         }
         for (Method m : themeManager.getDeclaredMethods()) {
             if (!"parseIconState".equals(m.getName()) || m.getParameterCount() != 1) {
@@ -120,9 +163,49 @@ final class LauncherHooks implements ShapeSync.Platform {
                 }
             });
             Log.i("ThemeManager.parseIconState hooked");
+            break;
+        }
+    }
+
+    /** Replaces the null shape the drawer passes, so the drawer follows the desktop shape. */
+    private void hookNewIcon() {
+        Class<?> bitmapInfo = XposedHelpers.findClass(L3 + "icons.BitmapInfo", mCl);
+        Class<?> iconShape = XposedHelpers.findClass(L3 + "icons.IconShape", mCl);
+        for (Method m : bitmapInfo.getDeclaredMethods()) {
+            if (!"newIcon".equals(m.getName())) {
+                continue;
+            }
+            Class<?>[] types = m.getParameterTypes();
+            if (types.length != 3 || !iconShape.isAssignableFrom(types[2])) {
+                continue;
+            }
+            m.setAccessible(true);
+            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args[2] != null) {
+                            return; // workspace icon: it brings its own shape
+                        }
+                        if (!HookEntry.enabled()) {
+                            return;
+                        }
+                        Object size = param.args[1];
+                        int px = size instanceof Integer ? (Integer) size : 192;
+                        Object shape = mSync.drawerShape(LauncherHooks.this, px);
+                        if (shape != null) {
+                            param.args[2] = shape;
+                        }
+                    } catch (Throwable t) {
+                        Log.e("newIcon", t);
+                    }
+                }
+            });
+            mNewIconHooked = true;
+            Log.i("BitmapInfo.newIcon hooked");
             return;
         }
-        Log.e("parseIconState not found", null);
+        Log.e("BitmapInfo.newIcon(Context,int,IconShape) not found", null);
     }
 
     /** Stores the launcher's freshly parsed state and reacts only when the shape really changed. */
@@ -146,7 +229,7 @@ final class LauncherHooks implements ShapeSync.Platform {
                 return;
             }
             if (mSync.applySnapshot(this, pending)) {
-                Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(mSync.lastPath()));
+                Probe.last(mContext, "桌面形状：" + ShapeSync.abbreviate(mSync.path()));
                 dispatchIconShape(false);
             }
         } catch (Throwable t) {
@@ -154,59 +237,33 @@ final class LauncherHooks implements ShapeSync.Platform {
         }
     }
 
-    private void hookBitmapInfo() {
-        Class<?> bitmapInfo = XposedHelpers.findClass(L3 + "icons.BitmapInfo", mCl);
-        mDefaultIconShapeField = ShapeSync.field(bitmapInfo, "defaultIconShape");
-        if (mDefaultIconShapeField == null) {
-            Log.e("BitmapInfo.defaultIconShape not found", null);
-        }
-        int hooked = 0;
-        for (Constructor<?> ctor : bitmapInfo.getDeclaredConstructors()) {
-            ctor.setAccessible(true);
-            XposedBridge.hookMethod(ctor, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        if (!HookEntry.enabled()) {
-                            return;
-                        }
-                        mSync.applyToBitmap(LauncherHooks.this, param.thisObject);
-                    } catch (Throwable t) {
-                        Log.e("patch BitmapInfo", t);
-                    }
-                }
-            });
-            hooked++;
-        }
-        Log.i("BitmapInfo constructors hooked: " + hooked);
-    }
-
     /**
-     * Asks the launcher to re-apply the icon shape to its icons.
+     * Makes the launcher rebuild its icons, the same way it reacts to a theme change:
+     * clear the icon pool, then reload the model. This is what makes a new shape apply without
+     * restarting the launcher.
      *
      * @param force bypass the throttle (used when disabling the module)
      */
     private void dispatchIconShape(boolean force) {
         long now = System.currentTimeMillis();
-        if (!force && now - mLastDispatch < 1000L) {
+        if (!force && now - mLastDispatch < 1500L) {
             return;
         }
         mLastDispatch = now;
         try {
-            if (mThemeManager == null || mIconShapeDataField == null || mDispatchValue == null) {
+            if (mRefreshAndReload == null) {
                 return;
             }
-            Object ref = mIconShapeDataField.get(mThemeManager);
-            if (ref == null) {
+            Object modelInitializer = mModelInitializer;
+            Object model = mLauncherModel;
+            if (modelInitializer == null || model == null) {
+                Log.d("model initializer unknown yet");
                 return;
             }
-            Object current = XposedHelpers.callMethod(ref, "getValue");
-            if (current != null) {
-                mDispatchValue.invoke(ref, current);
-                Log.i("icon shape redraw requested");
-            }
+            mRefreshAndReload.invoke(null, modelInitializer, model, "plallappsshape");
+            Log.i("icons reloaded for the new shape");
         } catch (Throwable t) {
-            Log.e("dispatch", t);
+            Log.e("reload icons", t);
         }
     }
 
@@ -215,6 +272,22 @@ final class LauncherHooks implements ShapeSync.Platform {
     @Override
     public ShapeSync.Pending parseIconState() {
         return mState;
+    }
+
+    @Override
+    public Object buildIconShape(String path, int size) {
+        try {
+            if (mGenerateIconShape == null || mGenericShapeCtor == null || mAddToPath == null) {
+                return null;
+            }
+            Object delegate = mGenericShapeCtor.newInstance(path);
+            Path out = new Path();
+            mAddToPath.invoke(delegate, 0f, 0f, (float) size / 2f, out);
+            return mGenerateIconShape.invoke(null, size, out);
+        } catch (Throwable t) {
+            Log.e("buildIconShape", t);
+            return null;
+        }
     }
 
     /** The SVG path behind a ShapeDelegate, or "" when it is a built-in shape. */
@@ -284,29 +357,5 @@ final class LauncherHooks implements ShapeSync.Platform {
         boolean force = mForceOverride;
         mForceOverride = false;
         return force;
-    }
-
-    @Override
-    public Object getField(Object target, String name) {
-        try {
-            Field f = mDefaultIconShapeField != null && "defaultIconShape".equals(name)
-                    ? mDefaultIconShapeField : ShapeSync.field(target.getClass(), name);
-            return f == null ? null : f.get(target);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    @Override
-    public void setField(Object target, String name, Object value) {
-        try {
-            Field f = mDefaultIconShapeField != null && "defaultIconShape".equals(name)
-                    ? mDefaultIconShapeField : ShapeSync.field(target.getClass(), name);
-            if (f != null) {
-                f.set(target, value);
-            }
-        } catch (Throwable t) {
-            Log.e("setField " + name, t);
-        }
     }
 }

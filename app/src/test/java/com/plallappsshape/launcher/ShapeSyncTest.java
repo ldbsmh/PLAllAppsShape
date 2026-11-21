@@ -5,6 +5,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -14,11 +15,10 @@ import static org.junit.Assert.assertTrue;
  *
  * <p>The contract, straight from the decompiled launcher:
  * <ul>
- *   <li>a non-circle desktop shape is installed on every {@code BitmapInfo} and on the system mask;</li>
- *   <li>a circle desktop shape means "do nothing" - the system mask already is a circle;</li>
- *   <li>workspace icons pass their own shape to {@code newIcon()}, so replacing the fallback does
- *       not touch them;</li>
- *   <li>disabling the module releases the mask override.</li>
+ *   <li>the drawer is {@code newIcon(ctx, flags, null)} - the null shape is what we replace;</li>
+ *   <li>the built shape is an {@code icons.IconShape}, cached per pixel size;</li>
+ *   <li>a circle desktop shape means "leave the launcher alone";</li>
+ *   <li>a new desktop shape takes effect without a restart, because the shape is built per draw.</li>
  * </ul>
  */
 public class ShapeSyncTest {
@@ -32,59 +32,59 @@ public class ShapeSyncTest {
         launcher = new FakeLauncher();
     }
 
-    /** Stand-in for BitmapInfo: the single field the module replaces. */
-    private static final class BitmapInfo {
-        Object defaultIconShape = new FakeLauncher.Shape("system-circle");
-    }
-
     @Test
-    public void desktopShapeIsInstalledOnEveryBitmap() {
-        BitmapInfo info = new BitmapInfo();
-        assertTrue(sync.applyToBitmap(launcher, info));
-        assertSame(launcher.shape, info.defaultIconShape);
+    public void drawerGetsTheDesktopShape() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
+        Object shape = sync.drawerShape(launcher, 192);
+        assertNotNull(shape);
+        assertEquals(192, ((FakeLauncher.IconShape) shape).size);
         assertEquals("M0 0H100V100H0Z", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
     @Test
-    public void anUnchangedShapeIsResolvedOnceOnly() {
-        sync.applyToBitmap(launcher, new BitmapInfo());
-        int overrides = launcher.overrides.size();
+    public void shapeIsBuiltOncePerSize() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
+        Object first = sync.drawerShape(launcher, 192);
+        Object again = sync.drawerShape(launcher, 192);
+        assertSame(first, again);
+        assertEquals(1, launcher.totalBuilds());
 
-        // every new bitmap still gets the shape, but the launcher state is not re-applied
-        BitmapInfo second = new BitmapInfo();
-        assertTrue(sync.applyToBitmap(launcher, second));
-        assertSame(launcher.shape, second.defaultIconShape);
-        assertEquals(overrides, launcher.overrides.size());
+        sync.drawerShape(launcher, 128);
+        assertEquals(2, launcher.totalBuilds());
     }
 
     @Test
-    public void circularDesktopShapeLeavesEverythingAlone() {
-        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
-        BitmapInfo info = new BitmapInfo();
-        assertFalse(sync.applyToBitmap(launcher, info));
-        assertEquals("system-circle", ((FakeLauncher.Shape) info.defaultIconShape).label);
-        assertTrue(launcher.overrides.isEmpty());
-    }
+    public void newDesktopShapeTakesEffectImmediately() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
+        Object before = sync.drawerShape(launcher, 192);
 
-    @Test
-    public void switchingBackToCircleReleasesTheOverride() {
-        sync.applyToBitmap(launcher, new BitmapInfo());
-        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
-        assertNull(sync.resolve(launcher));
-        assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
-    }
-
-    @Test
-    public void changingDesktopShapeRebuilds() {
-        sync.applyToBitmap(launcher, new BitmapInfo());
-
-        FakeLauncher.Shape teardrop = new FakeLauncher.Shape("teardrop");
-        launcher.shape = teardrop;
         launcher.path = "TEARDROP_PATH";
-        BitmapInfo info = new BitmapInfo();
-        assertTrue(sync.applyToBitmap(launcher, info));
-        assertSame(teardrop, info.defaultIconShape);
+        assertTrue(sync.applySnapshot(launcher, launcher.parseIconState()));
+        Object after = sync.drawerShape(launcher, 192);
+
+        assertFalse(before == after);
+        assertEquals("TEARDROP_PATH", ((FakeLauncher.IconShape) after).path);
         assertEquals("TEARDROP_PATH", launcher.overrides.get(launcher.overrides.size() - 1));
+    }
+
+    @Test
+    public void circularDesktopShapeLeavesTheLauncherAlone() {
+        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
+        assertFalse(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertNull(sync.drawerShape(launcher, 192));
+        assertTrue(launcher.overrides.isEmpty());
+        assertTrue(launcher.builds.isEmpty());
+    }
+
+    @Test
+    public void switchingBackToCircleStopsInterfering() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
+        assertNotNull(sync.drawerShape(launcher, 192));
+
+        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
+        assertTrue(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertNull(sync.drawerShape(launcher, 192));
+        assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
     @Test
@@ -92,7 +92,7 @@ public class ShapeSyncTest {
         // custom (scribbled) shapes: iconShape is not a GenericPathShape, so iconMask is the path
         launcher.path = "";
         launcher.mask = "M1 1L99 99Z";
-        sync.applyToBitmap(launcher, new BitmapInfo());
+        sync.applySnapshot(launcher, launcher.parseIconState());
         assertEquals("M1 1L99 99Z", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
@@ -100,29 +100,41 @@ public class ShapeSyncTest {
     public void missingPathIsNotFatal() {
         launcher.path = "";
         launcher.mask = "";
-        assertNull(sync.resolve(launcher));
+        assertFalse(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertNull(sync.drawerShape(launcher, 192));
     }
 
     @Test
     public void noIconStateYetIsNotFatal() {
-        // parseIconState() returns null until the launcher has parsed its own state
         launcher.stateAvailable = false;
-        assertNull(sync.resolve(launcher));
-        assertTrue(launcher.overrides.isEmpty());
+        assertFalse(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertNull(sync.drawerShape(launcher, 192));
     }
 
     @Test
-    public void disablingReleasesTheMaskOverride() {
-        sync.applyToBitmap(launcher, new BitmapInfo());
+    public void buildFailureIsNotCached() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
+        launcher.buildFails = true;
+        assertNull(sync.drawerShape(launcher, 192));
+        assertEquals(0, sync.builtCount());
+
+        launcher.buildFails = false;
+        assertNotNull(sync.drawerShape(launcher, 192));
+    }
+
+    @Test
+    public void disablingReleasesTheOverride() {
+        sync.applySnapshot(launcher, launcher.parseIconState());
         launcher.forceOverride = true;
-        assertNull(sync.resolve(launcher));
+        assertTrue(sync.applySnapshot(launcher, launcher.parseIconState()));
+        assertNull(sync.drawerShape(launcher, 192));
         assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
     @Test
     public void resolvingIsBoundedAndDoesNotLoop() {
-        // Regression guard: applySnapshot() used to re-enter parseIconState() through its own hook,
-        // which recursed until the launcher died. It must be pure bookkeeping.
+        // Regression guard: applySnapshot() must be pure bookkeeping. It once re-entered
+        // parseIconState() through its own hook, which recursed until the launcher died.
         for (int i = 0; i < 50; i++) {
             sync.applySnapshot(launcher, launcher.parseIconState());
         }
@@ -138,16 +150,6 @@ public class ShapeSyncTest {
     @Test
     public void circleDetection() {
         assertTrue(ShapeSync.isCircle(new FakeLauncher.ShapeDelegate$Circle()));
-        assertFalse(ShapeSync.isCircle(new FakeLauncher.Shape("squircle")));
-    }
-
-    @Test
-    public void abbreviateKeepsLogsShort() {
-        StringBuilder longPath = new StringBuilder("M0 0");
-        for (int i = 0; i < 40; i++) {
-            longPath.append("L").append(i).append(" ").append(i);
-        }
-        assertTrue(ShapeSync.abbreviate(longPath.toString()).length() <= 57);
-        assertEquals("null", ShapeSync.abbreviate(null));
+        assertFalse(ShapeSync.isCircle(new Object()));
     }
 }

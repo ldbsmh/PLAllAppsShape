@@ -3,24 +3,27 @@ package com.plallappsshape.launcher;
 import com.plallappsshape.launcher.ShapeSync.Pending;
 import com.plallappsshape.launcher.ShapeSync.Platform;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
-/** Fake launcher backing {@link ShapeSyncTest}: a mutable IconState plus recorded overrides. */
+/** Fake launcher backing {@link ShapeSyncTest}: mutable IconState + recorded shape builds. */
 final class FakeLauncher implements Platform {
 
-    /** Stand-in for the launcher's IconShape: identity is what matters. */
-    static final class Shape {
-        final String label;
+    /** Stand-in for icons.IconShape: only identity matters. */
+    static final class IconShape {
+        final String path;
+        final int size;
 
-        Shape(String label) {
-            this.label = label;
+        IconShape(String path, int size) {
+            this.path = path;
+            this.size = size;
         }
 
         @Override
         public String toString() {
-            return "Shape(" + label + ")";
+            return "IconShape(" + size + "px)";
         }
     }
 
@@ -30,19 +33,25 @@ final class FakeLauncher implements Platform {
 
     String mask = "M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0Z";
     String path = "M0 0H100V100H0Z";
-    Object shape = new Shape("desktop");
+    Object shape = new Object();
     boolean forceOverride;
     boolean stateAvailable = true;
+    boolean buildFails;
 
-    /** Counts calls to parseIconState(): the core must not call it in a loop. */
     int parseCalls;
-
     final List<String> overrides = new ArrayList<>();
+    final Map<String, Integer> builds = new HashMap<>();
 
     @Override
     public Pending parseIconState() {
         parseCalls++;
         return stateAvailable ? new Pending(mask, path, shape) : null;
+    }
+
+    @Override
+    public Object buildIconShape(String path, int size) {
+        builds.merge(path + "@" + size, 1, Integer::sum);
+        return buildFails ? null : new IconShape(path, size);
     }
 
     @Override
@@ -58,25 +67,11 @@ final class FakeLauncher implements Platform {
         return f;
     }
 
-    @Override
-    public Object getField(Object target, String name) {
-        try {
-            Field f = ShapeSync.field(target.getClass(), name);
-            return f == null ? null : f.get(target);
-        } catch (Throwable t) {
-            return null;
+    int totalBuilds() {
+        int n = 0;
+        for (int v : builds.values()) {
+            n += v;
         }
-    }
-
-    @Override
-    public void setField(Object target, String name, Object value) {
-        try {
-            Field f = ShapeSync.field(target.getClass(), name);
-            if (f != null) {
-                f.set(target, value);
-            }
-        } catch (Throwable t) {
-            throw new IllegalStateException(t);
-        }
+        return n;
     }
 }
