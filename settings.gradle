@@ -1,9 +1,18 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url 'https://jitpack.io' }
+    }
+}
+
 dependencyResolutionManagement {
     repositoriesMode = RepositoriesMode.PREFER_SETTINGS
     repositories {
         google()
         mavenCentral()
-        // Xposed API is published on jitpack only
+        // Xposed API is published on jitpack
         maven { url 'https://jitpack.io' }
     }
 }
