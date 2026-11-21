@@ -13,7 +13,9 @@ LSPosed 模块：让 **Pixel 启动器的抽屉（全部应用）里的图标跟
 
 | 环节 | 类 / 方法 | 关键点 |
 | --- | --- | --- |
-| 形状来源 | `graphics.ThemeManager.parseIconState(IconState)` | 按 `PREF_ICON_SHAPE` 在 `ShapesProvider.iconShapes` 里查表，生成 `IconState.iconMask / iconShape / isCircle` |
+| 形状来源 | `graphics.ThemeManager.parseIconState(IconState)` | 按 `PREF_ICON_SHAPE`（`backedUpItem("icon_shape_model","",ENCRYPTED)`，**加密**）在 `ShapesProvider.iconShapes` 里查表，`iconMask` 就是该条目的 **SVG path**，再由 `ShapeDelegate.Companion.pickBestShape(path)` 构建 `iconShape` |
+| 形状回退 | `icons.BitmapInfo.newIcon(ctx, flags, shape)` | `shape != null ? shape : this.defaultIconShape` —— **回退值就是抽屉的来源** |
+| 谁传形状 | `model.data.ItemInfoWithIcon.newIcon(ctx, flags)` | 桌面图标传 `iconShapeData.value`；**其余（抽屉/任务栏）传 `null`**，于是落到 `defaultIconShape` |
 | 形状实例 | `graphics.ShapeDelegate$GenericPathShape(String)` | 把路径字符串解析成 **100×100 坐标系**的 `basePath` |
 | 形状→像素 | `ShapeDelegate$GenericPathShape.addToPath(offX, offY, size, Path)` | `setScale(size/50)` + `postTranslate(offX, offY)` |
 | 形状缓存 | `icons.BaseIconFactory.defaultIconShapeCache` | **static** `SparseArray<WeakReference<IconShape>>`，按图标尺寸缓存 |

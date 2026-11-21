@@ -1,5 +1,6 @@
 package com.plallappsshape.launcher;
 
+import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -9,151 +10,128 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
- * {@link ShapeSync} behaviour on a plain JVM. The owner classes come from the doubles in
- * {@code app/src/test/java/com/android/launcher3} - same package and class names as the launcher's,
- * which is exactly what the production matching code looks at.
+ * {@link ShapeSync} behaviour on a plain JVM.
+ *
+ * <p>The contract, straight from the decompiled launcher:
+ * <ul>
+ *   <li>a non-circle desktop shape is installed on every {@code BitmapInfo} and on the system mask;</li>
+ *   <li>a circle desktop shape means "do nothing" - the system mask already is a circle;</li>
+ *   <li>workspace icons pass their own shape to {@code newIcon()}, so replacing the fallback does
+ *       not touch them;</li>
+ *   <li>disabling the module releases the mask override.</li>
+ * </ul>
  */
 public class ShapeSyncTest {
 
-    private final ShapeSync sync = new ShapeSync();
+    private ShapeSync sync;
     private FakeLauncher launcher;
 
-    @org.junit.Before
+    @Before
     public void setUp() {
+        sync = new ShapeSync();
         launcher = new FakeLauncher();
     }
 
+    /** Stand-in for BitmapInfo: the single field the module replaces. */
     private static final class BitmapInfo {
-        Object defaultIconShape = new FakeLauncher.Shape("SYSTEM_MASK");
-        final Object owner;
-
-        BitmapInfo(Object owner) {
-            this.owner = owner;
-        }
-    }
-
-    private static <T> T make(Class<T> cls) {
-        try {
-            return cls.getDeclaredConstructor().newInstance();
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    private BitmapInfo drawerIcon() {
-        return new BitmapInfo(make(com.android.launcher3.allapps.AllAppsGridAdapter.class));
-    }
-
-    private static String svgOf(BitmapInfo info) {
-        return ((FakeLauncher.Shape) info.defaultIconShape).svg;
+        Object defaultIconShape = new FakeLauncher.Shape("system-circle");
     }
 
     @Test
-    public void folderIconsAreNeverPatched() {
-        BitmapInfo info = new BitmapInfo(make(com.android.launcher3.folder.FolderIcon.class));
-        assertFalse(sync.applyToBitmap(launcher, info));
-        assertEquals("SYSTEM_MASK", svgOf(info));
-    }
-
-    @Test
-    public void drawerIconGetsDesktopShape() {
-        BitmapInfo info = drawerIcon();
+    public void desktopShapeIsInstalledOnEveryBitmap() {
+        BitmapInfo info = new BitmapInfo();
         assertTrue(sync.applyToBitmap(launcher, info));
-        assertEquals("SQUIRCLE_SVG", svgOf(info));
-        assertEquals("SQUIRCLE_SVG", launcher.overrides.get(launcher.overrides.size() - 1));
-    }
-
-    @Test
-    public void circleIsIgnored() {
-        launcher.stateShape = new ShapeDelegate$Circle();
-        BitmapInfo info = new BitmapInfo(make(com.android.launcher3.BubbleTextView.class));
-        assertFalse(sync.applyToBitmap(launcher, info));
-        assertTrue(launcher.built.isEmpty());
-        assertTrue(ShapeSync.isCircle(launcher.stateShape));
-        assertFalse(ShapeSync.isCircle(new Object()));
-    }
-
-    @Test
-    public void staleIconStateIsIgnoredUntilItMatchesPrefs() {
-        launcher.prefKey = "icon_shape_teardrop";
-        BitmapInfo info = new BitmapInfo(make(com.android.launcher3.allapps.AllAppsRecyclerView.class));
-        assertFalse(sync.applyToBitmap(launcher, info));
-
-        launcher.stateMask = launcher.statePath = "icon_shape_teardrop";
-        launcher.svg = "TEARDROP_SVG";
-        assertTrue(sync.applyToBitmap(launcher, info));
-        assertEquals("TEARDROP_SVG", svgOf(info));
-    }
-
-    @Test
-    public void shapeIsBuiltOnceAndReused() {
-        for (int i = 0; i < 25; i++) {
-            sync.applyToBitmap(launcher, drawerIcon());
-        }
-        assertEquals(1, launcher.built.size());
-    }
-
-    @Test
-    public void changingDesktopShapeRebuilds() {
-        sync.applyToBitmap(launcher, drawerIcon());
-
-        launcher.prefKey = launcher.stateMask = launcher.statePath = "icon_shape_teardrop";
-        launcher.svg = "TEARDROP_SVG";
-        BitmapInfo info = drawerIcon();
-        assertTrue(sync.applyToBitmap(launcher, info));
-        assertEquals("TEARDROP_SVG", svgOf(info));
-        assertEquals(2, launcher.built.size());
-    }
-
-    @Test
-    public void customSvgPathIsUsedVerbatim() {
-        launcher.prefKey = launcher.stateMask = launcher.statePath = "M0 0H100V100H0Z";
-        launcher.stateShape = new FakeLauncher.Shape("CUSTOM");
-        sync.applyToBitmap(launcher, new BitmapInfo(make(com.android.launcher3.BubbleTextView.class)));
+        assertSame(launcher.shape, info.defaultIconShape);
         assertEquals("M0 0H100V100H0Z", launcher.overrides.get(launcher.overrides.size() - 1));
-        assertTrue(launcher.built.isEmpty());
     }
 
     @Test
-    public void missingSvgIsNotFatal() {
-        launcher.nullSystemString = true;
-        assertFalse(sync.applyToBitmap(launcher, drawerIcon()));
+    public void anUnchangedShapeIsResolvedOnceOnly() {
+        sync.applyToBitmap(launcher, new BitmapInfo());
+        int overrides = launcher.overrides.size();
+
+        // every new bitmap still gets the shape, but the launcher state is not re-applied
+        BitmapInfo second = new BitmapInfo();
+        assertTrue(sync.applyToBitmap(launcher, second));
+        assertSame(launcher.shape, second.defaultIconShape);
+        assertEquals(overrides, launcher.overrides.size());
+    }
+
+    @Test
+    public void circularDesktopShapeLeavesEverythingAlone() {
+        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
+        BitmapInfo info = new BitmapInfo();
+        assertFalse(sync.applyToBitmap(launcher, info));
+        assertEquals("system-circle", ((FakeLauncher.Shape) info.defaultIconShape).label);
+        assertTrue(launcher.overrides.isEmpty());
+    }
+
+    @Test
+    public void switchingBackToCircleReleasesTheOverride() {
+        sync.applyToBitmap(launcher, new BitmapInfo());
+        launcher.shape = new FakeLauncher.ShapeDelegate$Circle();
         assertNull(sync.resolve(launcher));
-    }
-
-    @Test
-    public void buildFailureKeepsThePreviousShape() {
-        sync.applyToBitmap(launcher, drawerIcon());
-        Object first = sync.resolve(launcher);
-
-        launcher.buildFails = true;
-        launcher.prefKey = launcher.stateMask = launcher.statePath = "icon_shape_teardrop";
-        assertSame(first, sync.resolve(launcher));
-    }
-
-    @Test
-    public void disablingReleasesTheMaskOverride() {
-        sync.applyToBitmap(launcher, drawerIcon());
-        launcher.forceOverride = true;
-        sync.resolve(launcher);
         assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
     @Test
-    public void ownerRules() {
-        assertTrue(ShapeSync.isAllAppsOwner(com.android.launcher3.allapps.AllAppsGridAdapter.class));
-        assertTrue(ShapeSync.isAllAppsOwner(com.android.launcher3.allapps.AllAppsRecyclerView.class));
-        assertTrue(ShapeSync.isAllAppsOwner(com.android.launcher3.BubbleTextView.class));
-        assertFalse(ShapeSync.isAllAppsOwner(com.android.launcher3.folder.Folder.class));
-        assertFalse(ShapeSync.isAllAppsOwner(com.android.launcher3.folder.PreviewItemManager.class));
-        assertFalse(ShapeSync.isAllAppsOwner(com.android.launcher3.dragndrop.DragView.class));
-        assertFalse(ShapeSync.isAllAppsOwner(null));
+    public void changingDesktopShapeRebuilds() {
+        sync.applyToBitmap(launcher, new BitmapInfo());
+
+        FakeLauncher.Shape teardrop = new FakeLauncher.Shape("teardrop");
+        launcher.shape = teardrop;
+        launcher.path = "TEARDROP_PATH";
+        BitmapInfo info = new BitmapInfo();
+        assertTrue(sync.applyToBitmap(launcher, info));
+        assertSame(teardrop, info.defaultIconShape);
+        assertEquals("TEARDROP_PATH", launcher.overrides.get(launcher.overrides.size() - 1));
     }
 
     @Test
-    public void pathDetection() {
-        assertTrue(ShapeSync.looksLikePath("m 0,0 h 100"));
-        assertFalse(ShapeSync.looksLikePath("icon_shape_squircle"));
-        assertFalse(ShapeSync.looksLikePath(null));
+    public void rawPathIsUsedWhenTheShapeHasNoPathString() {
+        // custom (scribbled) shapes: iconShape is not a GenericPathShape, so iconMask is the path
+        launcher.path = "";
+        launcher.mask = "M1 1L99 99Z";
+        sync.applyToBitmap(launcher, new BitmapInfo());
+        assertEquals("M1 1L99 99Z", launcher.overrides.get(launcher.overrides.size() - 1));
+    }
+
+    @Test
+    public void missingPathIsNotFatal() {
+        launcher.path = "";
+        launcher.mask = "";
+        assertNull(sync.resolve(launcher));
+    }
+
+    @Test
+    public void noIconStateYetIsNotFatal() {
+        // parseIconState() returns null until the launcher has parsed its own state
+        launcher.stateAvailable = false;
+        assertNull(sync.resolve(launcher));
+        assertTrue(launcher.overrides.isEmpty());
+    }
+
+    @Test
+    public void disablingReleasesTheMaskOverride() {
+        sync.applyToBitmap(launcher, new BitmapInfo());
+        launcher.forceOverride = true;
+        assertNull(sync.resolve(launcher));
+        assertEquals("null", launcher.overrides.get(launcher.overrides.size() - 1));
+    }
+
+    @Test
+    public void circleDetection() {
+        assertTrue(ShapeSync.isCircle(new FakeLauncher.ShapeDelegate$Circle()));
+        assertFalse(ShapeSync.isCircle(new FakeLauncher.Shape("squircle")));
+    }
+
+    @Test
+    public void abbreviateKeepsLogsShort() {
+        StringBuilder longPath = new StringBuilder("M0 0");
+        for (int i = 0; i < 40; i++) {
+            longPath.append("L").append(i).append(" ").append(i);
+        }
+        assertTrue(ShapeSync.abbreviate(longPath.toString()).length() <= 57);
+        assertEquals("null", ShapeSync.abbreviate(null));
     }
 }

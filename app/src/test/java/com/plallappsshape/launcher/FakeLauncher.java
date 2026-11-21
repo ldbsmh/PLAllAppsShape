@@ -7,63 +7,38 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Fake launcher backing {@link ShapeSyncTest}: mutable IconState + recorded builds/overrides. */
+/** Fake launcher backing {@link ShapeSyncTest}: a mutable IconState plus recorded overrides. */
 final class FakeLauncher implements Platform {
 
+    /** Stand-in for the launcher's IconShape: identity is what matters. */
     static final class Shape {
-        final String svg;
+        final String label;
 
-        Shape(String svg) {
-            this.svg = svg;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            return o instanceof Shape && ((Shape) o).svg.equals(svg);
-        }
-
-        @Override
-        public int hashCode() {
-            return svg.hashCode();
+        Shape(String label) {
+            this.label = label;
         }
 
         @Override
         public String toString() {
-            return "Shape(" + svg + ")";
+            return "Shape(" + label + ")";
         }
     }
 
-    String prefKey = "icon_shape_squircle";
-    String stateMask = "icon_shape_squircle";
-    String statePath = "icon_shape_squircle";   // built-in shapes report their key
-    Object stateShape = new Object();
-    String svg = "SQUIRCLE_SVG";
-    boolean forceOverride;
-    boolean buildFails;
-    boolean nullSystemString;
+    /** Only the class name matters: it must contain {@code ShapeDelegate$Circle}. */
+    static final class ShapeDelegate$Circle {
+    }
 
-    final List<String> built = new ArrayList<>();
+    String mask = "M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0Z";
+    String path = "M0 0H100V100H0Z";
+    Object shape = new Shape("desktop");
+    boolean forceOverride;
+    boolean stateAvailable = true;
+
     final List<String> overrides = new ArrayList<>();
 
     @Override
-    public String readShapeKey() {
-        return prefKey;
-    }
-
-    @Override
     public Pending parseIconState() {
-        return new Pending(stateMask, statePath, stateShape);
-    }
-
-    @Override
-    public Object buildIconShape(String path) {
-        built.add(path);
-        return buildFails ? null : new Shape(path);
-    }
-
-    @Override
-    public String systemString(String name) {
-        return nullSystemString ? null : svg;
+        return stateAvailable ? new Pending(mask, path, shape) : null;
     }
 
     @Override
@@ -77,12 +52,6 @@ final class FakeLauncher implements Platform {
         boolean f = forceOverride;
         forceOverride = false;
         return f;
-    }
-
-    @Override
-    public Class<?> ownerClassOf(Object bitmapInfo) {
-        Object owner = getField(bitmapInfo, "owner");
-        return owner == null ? null : owner.getClass();
     }
 
     @Override
